@@ -340,6 +340,9 @@ sort__sym_cmp(struct hist_entry *left, struct hist_entry *right)
 			return ret;
 	}
 
+	if (left->offcpu_subclass != right->offcpu_subclass)
+		return left->offcpu_subclass - right->offcpu_subclass;
+
 	return _sort__sym_cmp(left->ms.sym, right->ms.sym);
 }
 

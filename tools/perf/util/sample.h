@@ -102,6 +102,7 @@ struct perf_sample {
 	u32 vcpu;
 	u16 insn_len;
 	u8  cpumode;
+	u8  offcpu_subclass;
 	u16 misc;
 	u16 ins_lat;
 	union {

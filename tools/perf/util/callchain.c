@@ -1151,6 +1151,15 @@ int fill_callchain_info(struct addr_location *al, struct callchain_cursor_node *
 	al->srcline = node->srcline;
 	al->addr = node->ip;
 
+	if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_IOWAIT)
+		al->level = 'I';
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_SCHED)
+		al->level = 'S';
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_LOCKWAIT)
+		al->level = 'L';
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_BLOCKED)
+		al->level = 'B';
+
 	if (al->sym == NULL) {
 		if (hide_unresolved)
 			return 0;
@@ -1160,21 +1169,21 @@ int fill_callchain_info(struct addr_location *al, struct callchain_cursor_node *
 	if (maps__equal(al->maps, machine__kernel_maps(machine))) {
 		if (machine__is_host(machine)) {
 			al->cpumode = PERF_RECORD_MISC_KERNEL;
-			al->level = 'k';
+			if (!al->level)	al->level = 'k';
 		} else {
 			al->cpumode = PERF_RECORD_MISC_GUEST_KERNEL;
-			al->level = 'g';
+			if (!al->level)	al->level = 'g';
 		}
 	} else {
 		if (machine__is_host(machine)) {
 			al->cpumode = PERF_RECORD_MISC_USER;
-			al->level = '.';
+			if (!al->level)	al->level = '.';
 		} else if (perf_guest) {
 			al->cpumode = PERF_RECORD_MISC_GUEST_USER;
-			al->level = 'u';
+			if (!al->level)	al->level = 'u';
 		} else {
 			al->cpumode = PERF_RECORD_MISC_HYPERVISOR;
-			al->level = 'H';
+			if (!al->level)	al->level = 'H';
 		}
 	}
 
