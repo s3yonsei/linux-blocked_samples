@@ -296,10 +296,10 @@ static long hist_time(unsigned long htime)
 	return htime;
 }
 
-static void he_stat__add_period(struct he_stat *he_stat, u64 period)
+static void he_stat__add_period(struct he_stat *he_stat, u64 period, u64 nr_events)
 {
 	he_stat->period		+= period;
-	he_stat->nr_events	+= 1;
+	he_stat->nr_events	+= nr_events;
 }
 
 static void he_stat__add_stat(struct he_stat *dest, struct he_stat *src)
@@ -626,7 +626,7 @@ static struct hist_entry *hists__findnew_entry(struct hists *hists,
 				hist_entry__add_callchain_period(he, period);
 			}
 			if (symbol_conf.cumulate_callchain)
-				he_stat__add_period(he->stat_acc, period);
+				he_stat__add_period(he->stat_acc, period, entry->stat.nr_events);
 
 			block_info__delete(entry->block_info);
 
@@ -736,8 +736,8 @@ __hists__add_entry(struct hists *hists,
 		.level	 = al->level,
 		.code_page_size = sample->code_page_size,
 		.stat = {
-			.nr_events = 1,
-			.period	= sample->period,
+			.nr_events = (1 + sample->weight),
+			.period	= sample->period * (1 + sample->weight),
 			.weight1 = sample->weight,
 			.weight2 = sample->ins_lat,
 			.weight3 = sample->p_stage_cyc,
@@ -758,6 +758,7 @@ __hists__add_entry(struct hists *hists,
 		.ins_lat = sample->ins_lat,
 		.p_stage_cyc = sample->p_stage_cyc,
 		.simd_flags = sample->simd_flags,
+		.offcpu_subclass = al->offcpu_subclass,
 	}, *he = hists__findnew_entry(hists, &entry, al, sample_self);
 
 	if (!hists->has_callchains && he && he->callchain_size != 0)
@@ -1173,7 +1174,7 @@ iter_add_next_cumulative_entry(struct hist_entry_iter *iter,
 		if (fast && hist_entry__fast__sym_diff(he_cache[i], &he_tmp))
 			continue;
 
-		if (hist_entry__cmp(he_cache[i], &he_tmp) == 0) {
+		if (he_cache[i]->offcpu_subclass || hist_entry__cmp(he_cache[i], &he_tmp) == 0) {
 			/* to avoid calling callback function */
 			iter->he = NULL;
 			return 0;
@@ -1305,6 +1306,9 @@ hist_entry__cmp(struct hist_entry *left, struct hist_entry *right)
 		if (cmp)
 			break;
 	}
+
+	if (!cmp)
+		cmp = left->offcpu_subclass - right->offcpu_subclass;
 
 	return cmp;
 }

@@ -142,6 +142,7 @@ enum perf_sw_ids {
 	PERF_COUNT_SW_PAGE_FAULTS_MAJ	= 6,
 	PERF_COUNT_SW_ALIGNMENT_FAULTS	= 7,
 	PERF_COUNT_SW_EMULATION_FAULTS	= 8,
+	PERF_COUNT_SW_TASK_CLOCK_PLUS	= 12,
 };
 
 Counters of the type PERF_TYPE_TRACEPOINT are available when the ftrace event

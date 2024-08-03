@@ -946,6 +946,9 @@ void __noreturn do_exit(long code)
 	 * because of cgroup mode, must be called before cgroup_exit()
 	 */
 	perf_event_exit_task(tsk);
+	/* Free perf_event_offcpu_ctxp */
+	if (likely(tsk->perf_event_offcpu_ctxp))
+		kfree(tsk->perf_event_offcpu_ctxp);
 
 	sched_autogroup_exit_task(tsk);
 	cgroup_exit(tsk);

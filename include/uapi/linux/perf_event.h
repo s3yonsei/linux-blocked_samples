@@ -128,6 +128,7 @@ enum perf_sw_ids {
 	PERF_COUNT_SW_DUMMY			= 9,
 	PERF_COUNT_SW_BPF_OUTPUT		= 10,
 	PERF_COUNT_SW_CGROUP_SWITCHES		= 11,
+	PERF_COUNT_SW_TASK_CLOCK_PLUS		= 12,
 
 	PERF_COUNT_SW_MAX,			/* non-ABI */
 };
@@ -747,11 +748,12 @@ struct perf_event_mmap_page {
  * The current state of perf_event_header::misc bits usage:
  * ('|' used bit, '-' unused bit)
  *
- *  012         CDEF
- *  |||---------||||
+ *  012345      CDEF
+ *  ||||||------||||
  *
  *  Where:
  *    0-2     CPUMODE_MASK
+ *    3-5     OFFCPU_SUBCLASS_MASK
  *
  *    C       PROC_MAP_PARSE_TIMEOUT
  *    D       MMAP_DATA / COMM_EXEC / FORK_EXEC / SWITCH_OUT
@@ -766,6 +768,12 @@ struct perf_event_mmap_page {
 #define PERF_RECORD_MISC_HYPERVISOR		(3 << 0)
 #define PERF_RECORD_MISC_GUEST_KERNEL		(4 << 0)
 #define PERF_RECORD_MISC_GUEST_USER		(5 << 0)
+
+#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_MASK		(7 << 3)
+#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_BLOCKED	(1 << 3)
+#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_IOWAIT		(2 << 3)
+#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_SCHED		(3 << 3)
+#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_LOCKWAIT	(4 << 3)
 
 /*
  * Indicates that /proc/PID/maps parsing are truncated by time out.

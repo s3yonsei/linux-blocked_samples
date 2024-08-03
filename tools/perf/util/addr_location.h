@@ -19,6 +19,7 @@ struct addr_location {
 	char	      level;
 	u8	      filtered;
 	u8	      cpumode;
+	u8	      offcpu_subclass;
 	s32	      cpu;
 	s32	      socket;
 };

@@ -634,20 +634,29 @@ struct map *thread__find_map(struct thread *thread, u8 cpumode, u64 addr,
 	if (machine == NULL)
 		return NULL;
 
+	if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_IOWAIT)
+		al->level = 'I';
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_SCHED)
+		al->level = 'S';
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_LOCKWAIT)
+		al->level = 'L';
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_BLOCKED)
+		al->level = 'B';
+
 	if (cpumode == PERF_RECORD_MISC_KERNEL && perf_host) {
-		al->level = 'k';
+		if (!al->level)	al->level = 'k';
 		maps = machine__kernel_maps(machine);
 		load_map = !symbol_conf.lazy_load_kernel_maps;
 	} else if (cpumode == PERF_RECORD_MISC_USER && perf_host) {
-		al->level = '.';
+		if (!al->level)	al->level = '.';
 	} else if (cpumode == PERF_RECORD_MISC_GUEST_KERNEL && perf_guest) {
-		al->level = 'g';
+		if (!al->level)	al->level = 'g';
 		maps = machine__kernel_maps(machine);
 		load_map = !symbol_conf.lazy_load_kernel_maps;
 	} else if (cpumode == PERF_RECORD_MISC_GUEST_USER && perf_guest) {
-		al->level = 'u';
+		if (!al->level)	al->level = 'u';
 	} else {
-		al->level = 'H';
+		if (!al->level)	al->level = 'H';
 
 		if ((cpumode == PERF_RECORD_MISC_GUEST_USER ||
 			cpumode == PERF_RECORD_MISC_GUEST_KERNEL) &&

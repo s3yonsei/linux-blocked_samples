@@ -594,6 +594,7 @@ static int evsel__hw_name(struct evsel *evsel, char *bf, size_t size)
 const char *const evsel__sw_names[PERF_COUNT_SW_MAX] = {
 	"cpu-clock",
 	"task-clock",
+	"task-clock-plus",
 	"page-faults",
 	"context-switches",
 	"cpu-migrations",
@@ -2672,9 +2673,10 @@ int evsel__parse_sample(struct evsel *evsel, union perf_event *event,
 	data->stream_id = data->id = data->time = -1ULL;
 	data->period = evsel->core.attr.sample_period;
 	data->cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
-	data->misc    = event->header.misc;
+	data->misc    = event->header.misc & (~PERF_RECORD_MISC_OFFCPU_SUBCLASS_MASK);
 	data->data_src = PERF_MEM_DATA_SRC_NONE;
 	data->vcpu = -1;
+	data->offcpu_subclass = event->header.misc & PERF_RECORD_MISC_OFFCPU_SUBCLASS_MASK;
 
 	if (event->header.type != PERF_RECORD_SAMPLE) {
 		if (!evsel->core.attr.sample_id_all)

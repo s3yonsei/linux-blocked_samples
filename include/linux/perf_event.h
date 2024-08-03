@@ -930,6 +930,36 @@ struct perf_event_groups {
 	u64		index;
 };
 
+#define PERF_EVENT_OFFCPU_ETC		0x1
+#define PERF_EVENT_OFFCPU_IOWAIT	0x2
+#define PERF_EVENT_OFFCPU_SCHED		0x4
+#define PERF_EVENT_OFFCPU_LOCKWAIT	0x8
+
+/*
+ * struct perf_event_offcpu_context - offcpu event context structure
+ * Used as a container for sampling offcpu task-clock event. This struct
+ * is not shared between tasks.
+ *
+ * - sched_out_timestamp: timestamp at prepare_task_switch()
+ * - wakeup_timestamp: timestamp at try_to_wake_up()
+ * - offcpu_subclass: subclass (i.e., the reason) for off-CPU event.
+ *   Subclass is decided at schedule out.
+ *      1. I/O: blocking I/O period. Set if in_iowait (in task_struct) is set.
+ *      2. LOCK: lock-waiting (e.g., futex) period. Set if in_lockwait
+ *               (in this struct) is set.
+ *      3. CPU scheduling: waiting on runqueue period. Set if state
+ *                         (in task_struct) is TASK_RUNNING.
+ *      4. etc.: other off-CPU events (e.g., sleep). Set if task is scheduling out
+ *               and does not fall into any of the above subclasses.
+ * - in_lockwait: flag for decide whether the offcpu_subclass is LOCK or not.
+ */
+
+struct perf_event_offcpu_context {
+	u64	sched_out_timestamp;
+	u64	wakeup_timestamp;
+	u8	offcpu_subclass;
+	bool	in_lockwait;
+};
 
 /**
  * struct perf_event_context - event context structure

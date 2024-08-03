@@ -129,6 +129,10 @@ const struct event_symbol event_symbols_sw[PERF_COUNT_SW_MAX] = {
 		.symbol = "cgroup-switches",
 		.alias  = "",
 	},
+	[PERF_COUNT_SW_TASK_CLOCK_PLUS] = {
+		.symbol = "task-clock-plus",
+		.alias  = "",
+	},
 };
 
 const char *event_type(int type)

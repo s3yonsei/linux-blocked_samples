@@ -263,6 +263,7 @@ struct hist_entry {
 	struct symbol		*parent;
 	struct branch_info	*branch_info;
 	long			time;
+	u8			offcpu_subclass;
 	struct hists		*hists;
 	struct mem_info		*mem_info;
 	struct block_info	*block_info;
