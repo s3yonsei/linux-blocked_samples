@@ -4,6 +4,7 @@
 #include <linux/sched/task.h>
 #include <linux/sched/signal.h>
 #include <linux/freezer.h>
+#include <linux/perf_event.h>
 
 #include "futex.h"
 
@@ -350,6 +351,10 @@ void futex_wait_queue(struct futex_hash_bucket *hb, struct futex_q *q,
 	 * access to the hash list and forcing another memory barrier.
 	 */
 	set_current_state(TASK_INTERRUPTIBLE|TASK_FREEZABLE);
+#ifdef CONFIG_PERF_EVENTS
+	/* Set in_lockwait in perf_event_offcpu_ctxp */
+	current->perf_event_offcpu_ctxp->in_lockwait = true;
+#endif
 	futex_queue(q, hb);
 
 	/* Arm the timer */
@@ -369,6 +374,10 @@ void futex_wait_queue(struct futex_hash_bucket *hb, struct futex_q *q,
 		if (!timeout || timeout->task)
 			schedule();
 	}
+#ifdef CONFIG_PERF_EVENTS
+	/* Clear in_lockwait in perf_event_offcpu_ctxp */
+	current->perf_event_offcpu_ctxp->in_lockwait = false;
+#endif
 	__set_current_state(TASK_RUNNING);
 }
 
@@ -446,6 +455,10 @@ retry:
 	}
 
 	set_current_state(TASK_INTERRUPTIBLE|TASK_FREEZABLE);
+#ifdef CONFIG_PERF_EVENTS
+	/* Set in_lockwait in perf_event_offcpu_ctxp */
+	current->perf_event_offcpu_ctxp->in_lockwait = true;
+#endif
 
 	for (i = 0; i < count; i++) {
 		u32 __user *uaddr = (u32 __user *)(unsigned long)vs[i].w.uaddr;
@@ -466,6 +479,10 @@ retry:
 		}
 
 		futex_q_unlock(hb);
+#ifdef CONFIG_PERF_EVENTS
+		/* Clear in_lockwait in perf_event_offcpu_ctxp */
+		current->perf_event_offcpu_ctxp->in_lockwait = false;
+#endif
 		__set_current_state(TASK_RUNNING);
 
 		/*
@@ -556,6 +573,10 @@ int futex_wait_multiple(struct futex_vector *vs, unsigned int count,
 
 		futex_sleep_multiple(vs, count, to);
 
+#ifdef CONFIG_PERF_EVENTS
+		/* Clear in_lockwait in perf_event_offcpu_ctxp */
+		current->perf_event_offcpu_ctxp->in_lockwait = false;
+#endif
 		__set_current_state(TASK_RUNNING);
 
 		ret = futex_unqueue_multiple(vs, count);

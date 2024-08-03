@@ -1429,7 +1429,7 @@ static int process_sample_event(struct perf_tool *tool,
 	if (rec->buildid_all)
 		return 0;
 
-	rec->samples++;
+	rec->samples += (1 + sample->weight);
 	return build_id__mark_dso_hit(tool, event, sample, evsel, machine);
 }
 
