@@ -1151,13 +1151,13 @@ int fill_callchain_info(struct addr_location *al, struct callchain_cursor_node *
 	al->srcline = node->srcline;
 	al->addr = node->ip;
 
-	if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_IOWAIT)
+	if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_IOWAIT)
 		al->level = 'I';
-	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_SCHED)
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SCHED)
 		al->level = 'S';
-	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_LOCKWAIT)
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_LOCKWAIT)
 		al->level = 'L';
-	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_BLOCKED)
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_BLOCKED)
 		al->level = 'B';
 
 	if (al->sym == NULL) {
