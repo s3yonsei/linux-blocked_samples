@@ -8018,16 +8018,16 @@ void perf_prepare_header(struct perf_event_header *header,
 	if (is_sampling_event(event) && current->perf_event_offcpu_ctxp->sched_out_timestamp) {
 		switch (current->perf_event_offcpu_ctxp->offcpu_subclass) {
 			case PERF_EVENT_OFFCPU_ETC:
-				header->misc |= PERF_RECORD_MISC_OFFCPU_SUBCLASS_BLOCKED;
+				header->misc |= PERF_RECORD_MISC_OFFCPU_BLOCKED;
 				break;
 			case PERF_EVENT_OFFCPU_IOWAIT:
-				header->misc |= PERF_RECORD_MISC_OFFCPU_SUBCLASS_IOWAIT;
+				header->misc |= PERF_RECORD_MISC_OFFCPU_IOWAIT;
 				break;
 			case PERF_EVENT_OFFCPU_SCHED:
-				header->misc |= PERF_RECORD_MISC_OFFCPU_SUBCLASS_SCHED;
+				header->misc |= PERF_RECORD_MISC_OFFCPU_SCHED;
 				break;
 			case PERF_EVENT_OFFCPU_LOCKWAIT:
-				header->misc |= PERF_RECORD_MISC_OFFCPU_SUBCLASS_LOCKWAIT;
+				header->misc |= PERF_RECORD_MISC_OFFCPU_LOCKWAIT;
 				break;
 			default:
 				printk(KERN_ERR "Unknown offcpu subclass.");

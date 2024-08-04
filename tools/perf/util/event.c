@@ -634,13 +634,13 @@ struct map *thread__find_map(struct thread *thread, u8 cpumode, u64 addr,
 	if (machine == NULL)
 		return NULL;
 
-	if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_IOWAIT)
+	if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_IOWAIT)
 		al->level = 'I';
-	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_SCHED)
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SCHED)
 		al->level = 'S';
-	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_LOCKWAIT)
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_LOCKWAIT)
 		al->level = 'L';
-	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_SUBCLASS_BLOCKED)
+	else if (al->offcpu_subclass == PERF_RECORD_MISC_OFFCPU_BLOCKED)
 		al->level = 'B';
 
 	if (cpumode == PERF_RECORD_MISC_KERNEL && perf_host) {

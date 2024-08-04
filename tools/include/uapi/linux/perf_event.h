@@ -753,7 +753,7 @@ struct perf_event_mmap_page {
  *
  *  Where:
  *    0-2     CPUMODE_MASK
- *    3-5     OFFCPU_SUBCLASS_MASK
+ *    3-5     OFFCPU_MASK
  *
  *    C       PROC_MAP_PARSE_TIMEOUT
  *    D       MMAP_DATA / COMM_EXEC / FORK_EXEC / SWITCH_OUT
@@ -769,11 +769,11 @@ struct perf_event_mmap_page {
 #define PERF_RECORD_MISC_GUEST_KERNEL		(4 << 0)
 #define PERF_RECORD_MISC_GUEST_USER		(5 << 0)
 
-#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_MASK		(7 << 3)
-#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_BLOCKED	(1 << 3)
-#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_IOWAIT		(2 << 3)
-#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_SCHED		(3 << 3)
-#define PERF_RECORD_MISC_OFFCPU_SUBCLASS_LOCKWAIT	(4 << 3)
+#define PERF_RECORD_MISC_OFFCPU_MASK		(7 << 3)
+#define PERF_RECORD_MISC_OFFCPU_BLOCKED		(1 << 3)
+#define PERF_RECORD_MISC_OFFCPU_IOWAIT		(2 << 3)
+#define PERF_RECORD_MISC_OFFCPU_SCHED		(3 << 3)
+#define PERF_RECORD_MISC_OFFCPU_LOCKWAIT	(4 << 3)
 
 /*
  * Indicates that /proc/PID/maps parsing are truncated by time out.
