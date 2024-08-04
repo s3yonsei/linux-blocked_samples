@@ -961,6 +961,14 @@ struct perf_event_offcpu_context {
 	bool	in_lockwait;
 };
 
+/* Macros for offcpu sampling */
+#define is_sampling_task_clock_plus(event)	\
+	(event->attr.config == PERF_COUNT_SW_TASK_CLOCK_PLUS &&	\
+	 is_sampling_event(event))
+
+#define need_offcpu_sampling(tsk)	\
+	(tsk->perf_event_offcpu_ctxp->sched_out_timestamp)
+
 /**
  * struct perf_event_context - event context structure
  *

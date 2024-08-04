@@ -3594,8 +3594,8 @@ perf_event_context_sched_out(struct task_struct *task, struct task_struct *next)
 	if (!parent && !next_parent)
 		goto unlock;
 
-	/* Do not do_switch for offcpu sampling */
-	if (next->perf_event_offcpu_ctxp->offcpu_subclass)
+	/* If next task needs offcpu sampling, enforce do_switch. */
+	if (need_offcpu_sampling(next))
 		goto unlock;
 
 	if (next_parent == ctx || next_ctx == parent || next_parent == parent) {
@@ -7913,7 +7913,7 @@ void perf_prepare_sample(struct perf_sample_data *data,
 
 	if (filtered_sample_type & PERF_SAMPLE_WEIGHT_TYPE) {
 		/* weight field is used for offcpu sampling */
-		if (!current->perf_event_offcpu_ctxp->sched_out_timestamp)	data->weight.full = 0;
+		if (!need_offcpu_sampling(current))	data->weight.full = 0;
 		data->sample_flags |= PERF_SAMPLE_WEIGHT_TYPE;
 	}
 
@@ -8015,7 +8015,7 @@ void perf_prepare_header(struct perf_event_header *header,
 	 * If sampling event and offcpu context of current is set, misc of
          * header must be set as follows.
 	 */
-	if (is_sampling_event(event) && current->perf_event_offcpu_ctxp->sched_out_timestamp) {
+	if (is_sampling_event(event) && need_offcpu_sampling(current)) {
 		switch (current->perf_event_offcpu_ctxp->offcpu_subclass) {
 			case PERF_EVENT_OFFCPU_ETC:
 				header->misc |= PERF_RECORD_MISC_OFFCPU_BLOCKED;
@@ -11428,7 +11428,10 @@ static void task_clock_event_stop(struct perf_event *event, int flags)
 
 static int task_clock_event_add(struct perf_event *event, int flags)
 {
-	if (event->attr.config == PERF_COUNT_SW_TASK_CLOCK || !is_sampling_event(event))
+	if (!is_sampling_task_clock_plus(event))
+		goto out;
+
+	if (unlikely(!need_offcpu_sampling(current)))
 		goto out;
 
 	/* (Logical flows)
@@ -11475,68 +11478,66 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	s64 delta = 0, iteration = 0, sub_iteration = 0;
 	s64 period_left, new_period_left, period;
 
-	if (sched_out_timestamp) {
-		hwc = &event->hw;
-		period = (s64)hwc->sample_period;
-		delta = (s64)(perf_clock() - sched_out_timestamp);
-		period_left = local64_read(&hwc->period_left);
+	hwc = &event->hw;
+	period = (s64)hwc->sample_period;
+	delta = (s64)(perf_clock() - sched_out_timestamp);
+	period_left = local64_read(&hwc->period_left);
 
-		if (period_left < 0 || period <= period_left)
-			period_left = 0;
+	if (period_left < 0 || period <= period_left)
+		period_left = 0;
 
-		/* Calculate the number of offcpu samples. */
-		iteration = (period + delta - period_left) / period;
-		if (wakeup_timestamp && (offcpu_subclass != PERF_EVENT_OFFCPU_SCHED))
-			sub_iteration = (period + (wakeup_timestamp - sched_out_timestamp) - period_left) / period;
+	/* Calculate the number of offcpu samples. */
+	iteration = (period + delta - period_left) / period;
+	if (wakeup_timestamp && (offcpu_subclass != PERF_EVENT_OFFCPU_SCHED))
+		sub_iteration = (period + (wakeup_timestamp - sched_out_timestamp) - period_left) / period;
 
-		/* Calculate new_period_left for next sampling after sched-in. */
-		new_period_left = period - ((period + delta - period_left) % period);
-		if (new_period_left < 0 || period <= new_period_left)
-			new_period_left = 0;
+	/* Calculate new_period_left for next sampling after sched-in. */
+	new_period_left = period - ((period + delta - period_left) % period);
+	if (new_period_left < 0 || period <= new_period_left)
+		new_period_left = 0;
 
-		perf_sample_data_init(&data, 0, period);
-		regs = task_pt_regs(current);
+	perf_sample_data_init(&data, 0, period);
+	regs = task_pt_regs(current);
 
-		/* Inject offcpu samples */
-		if (iteration > 0) {
-			/* Merging identical repeated offcpu samples. */
-			if (event->attr.sample_type & PERF_SAMPLE_WEIGHT_TYPE) {
-				if (sub_iteration > 0) {
-					data.weight.full = sub_iteration - 1;
-					READ_ONCE(event->overflow_handler)(event, &data, regs);
-					if (iteration - sub_iteration > 0) {
-						offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
-						data.weight.full = iteration - sub_iteration - 1;
-						READ_ONCE(event->overflow_handler)(event, &data, regs);
-					}
-				} else {
-					data.weight.full = iteration - 1;
+	/* Inject offcpu samples */
+	if (iteration > 0) {
+		/* Merging identical repeated offcpu samples. */
+		if (event->attr.sample_type & PERF_SAMPLE_WEIGHT_TYPE) {
+			if (sub_iteration > 0) {
+				data.weight.full = sub_iteration - 1;
+				READ_ONCE(event->overflow_handler)(event, &data, regs);
+				if (iteration - sub_iteration > 0) {
+					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
+					data.weight.full = iteration - sub_iteration - 1;
 					READ_ONCE(event->overflow_handler)(event, &data, regs);
 				}
 			} else {
-				if (sub_iteration > 0) {
-					for(; 0 < sub_iteration; sub_iteration--) {
-						READ_ONCE(event->overflow_handler)(event, &data, regs);
-						iteration--;
-					}
+				data.weight.full = iteration - 1;
+				READ_ONCE(event->overflow_handler)(event, &data, regs);
+			}
+		} else {
+			if (sub_iteration > 0) {
+				for(; 0 < sub_iteration; sub_iteration--) {
+					READ_ONCE(event->overflow_handler)(event, &data, regs);
+					iteration--;
+				}
 
-					if (iteration > 0) {
-						offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
-						for(; 0 < iteration; iteration--)
-							READ_ONCE(event->overflow_handler)(event, &data, regs);
-					}
-				} else {
+				if (iteration > 0) {
+					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 					for(; 0 < iteration; iteration--)
 						READ_ONCE(event->overflow_handler)(event, &data, regs);
 				}
+			} else {
+				for(; 0 < iteration; iteration--)
+					READ_ONCE(event->overflow_handler)(event, &data, regs);
 			}
 		}
-		local64_set(&hwc->period_left, new_period_left);
-
-		offcpu_ctxp->sched_out_timestamp = 0;
-		offcpu_ctxp->wakeup_timestamp = 0;
-		offcpu_ctxp->offcpu_subclass = 0;
 	}
+	local64_set(&hwc->period_left, new_period_left);
+
+	offcpu_ctxp->sched_out_timestamp = 0;
+	offcpu_ctxp->wakeup_timestamp = 0;
+	offcpu_ctxp->offcpu_subclass = 0;
 
 out:
 	if (flags & PERF_EF_START)
@@ -11551,7 +11552,7 @@ static void task_clock_event_del(struct perf_event *event, int flags)
 	task_clock_event_stop(event, PERF_EF_UPDATE);
 
 	/* Offcpu subclass designation if sampling task-clock+ */
-	if (event->attr.config == PERF_COUNT_SW_TASK_CLOCK_PLUS && is_sampling_event(event)) {
+	if (is_sampling_task_clock_plus(event)) {
 		struct perf_event_offcpu_context *offcpu_ctxp = current->perf_event_offcpu_ctxp;
 		if (!current->__state)
 			offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
@@ -12355,9 +12356,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 
 	if (task) {
 		/* Initialize perf_event_offcpu_ctxp of task (if allocated) considering the state of it. */
-		if (event->attr.config == PERF_COUNT_SW_TASK_CLOCK_PLUS &&
-		    is_sampling_event(event) &&
-		    task->perf_event_offcpu_ctxp) {
+		if (is_sampling_task_clock_plus(event) && task->perf_event_offcpu_ctxp) {
 			struct perf_event_offcpu_context *offcpu_ctxp = task->perf_event_offcpu_ctxp;
 			if (task->on_cpu) {
 				/* If task is running, clear the perf_event_offcpu_ctxp */
@@ -12365,7 +12364,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 				offcpu_ctxp->wakeup_timestamp = 0;
 				offcpu_ctxp->offcpu_subclass = 0;
 				offcpu_ctxp->in_lockwait = 0;
-			} else if (offcpu_ctxp->sched_out_timestamp) {
+			} else if (need_offcpu_sampling(task)) {
 				/* Otherwise, start offcpu sampling from now. */
 				if (!task->__state) {
 					offcpu_ctxp->sched_out_timestamp = perf_clock();
