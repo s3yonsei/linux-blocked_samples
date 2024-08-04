@@ -11551,7 +11551,7 @@ static void task_clock_event_del(struct perf_event *event, int flags)
 {
 	task_clock_event_stop(event, PERF_EF_UPDATE);
 
-	/* Offcpu subclass designation if sampling task-clock+ */
+	/* Offcpu subclass designation if sampling task-clock-plus */
 	if (is_sampling_task_clock_plus(event)) {
 		struct perf_event_offcpu_context *offcpu_ctxp = current->perf_event_offcpu_ctxp;
 		if (!current->__state)
