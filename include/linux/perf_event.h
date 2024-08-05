@@ -931,10 +931,11 @@ struct perf_event_groups {
  */
 
 struct perf_event_offcpu_context {
-	u64	sched_out_timestamp;
-	u64	wakeup_timestamp;
-	u8	offcpu_subclass;
-	bool	in_lockwait;
+	struct	pt_regs regs;
+	u64		sched_out_timestamp;
+	u64		wakeup_timestamp;
+	u8		offcpu_subclass;
+	bool		in_lockwait;
 };
 
 /* Macros for offcpu sampling */

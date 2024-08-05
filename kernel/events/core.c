@@ -7920,7 +7920,8 @@ void perf_prepare_header(struct perf_event_header *header,
 				printk(KERN_ERR "Unknown offcpu subclass.");
 				break;
 		};
-	}
+	} else if (is_sampling_task_clock_plus(event))
+		current->perf_event_offcpu_ctxp->regs = *regs;
 
 	/*
 	 * If you're adding more sample types here, you likely need to do
@@ -11383,7 +11384,7 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 		new_period_left = 0;
 
 	perf_sample_data_init(&data, 0, period);
-	regs = task_pt_regs(current);
+	regs = &offcpu_ctxp->regs;
 
 	/* Inject offcpu samples */
 	if (iteration > 0) {
