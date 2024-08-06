@@ -12363,7 +12363,6 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 				offcpu_ctxp->sched_out_timestamp = 0;
 				offcpu_ctxp->wakeup_timestamp = 0;
 				offcpu_ctxp->offcpu_subclass = 0;
-				offcpu_ctxp->in_lockwait = 0;
 			} else if (need_offcpu_sampling(task)) {
 				/* Otherwise, start offcpu sampling from now. */
 				if (!task->__state) {
