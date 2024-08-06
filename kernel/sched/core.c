@@ -4270,8 +4270,13 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		ttwu_queue(p, cpu, wake_flags);
 	}
 out:
-	if (success)
+	if (success) {
 		ttwu_stat(p, task_cpu(p), wake_flags);
+#ifdef CONFIG_PERF_EVENTS
+		if (need_offcpu_sampling(p))
+			p->perf_event_offcpu_ctxp->wakeup_timestamp = local_clock();
+#endif
+	}
 
 	return success;
 }
