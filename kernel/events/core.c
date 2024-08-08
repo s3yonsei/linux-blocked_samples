@@ -14077,7 +14077,7 @@ int perf_event_init_task(struct task_struct *child, u64 clone_flags)
 	child->perf_event_offcpu_ctxp->wakeup_timestamp = 0;
 	child->perf_event_offcpu_ctxp->offcpu_subclass = 0;
 	child->perf_event_offcpu_ctxp->in_lockwait = false;
-	child->perf_event_offcpu_ctxp->enabled = true;
+	child->perf_event_offcpu_ctxp->enabled = false;
 
 	return 0;
 }
