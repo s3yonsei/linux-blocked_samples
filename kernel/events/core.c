@@ -12368,12 +12368,11 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 				offcpu_ctxp->offcpu_subclass = 0;
 			} else if (need_offcpu_sampling(task)) {
 				/* Otherwise, start offcpu sampling from now. */
+				offcpu_ctxp->sched_out_timetstamp = perf_clock();
 				if (!task->__state) {
-					offcpu_ctxp->sched_out_timestamp = perf_clock();
 					offcpu_ctxp->wakeup_timestamp = offcpu_ctxp->sched_out_timestamp;
 					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 				} else {
-					offcpu_ctxp->sched_out_timestamp = perf_clock();
 					if (current->in_iowait)
 						offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_IOWAIT;
 					else if (offcpu_ctxp->in_lockwait)
