@@ -3594,7 +3594,7 @@ perf_event_context_sched_out(struct task_struct *task, struct task_struct *next)
 	if (!parent && !next_parent)
 		goto unlock;
 
-	/* If next task needs offcpu sampling, enforce do_switch. */
+	/* If tasks (task or next) need offcpu sampling, enforce do_switch. */
 	if (offcpu_sampling_enabled(task) || need_offcpu_sampling(next))
 		goto unlock;
 
@@ -11501,8 +11501,8 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 
 	/* Inject offcpu samples */
 	if (iteration > 0) {
-		/* Merging identical repeated offcpu samples. */
 		if (event->attr.sample_type & PERF_SAMPLE_WEIGHT_TYPE) {
+			/* Merging identical repeated offcpu samples. */
 			if (sub_iteration > 0) {
 				data.weight.full = sub_iteration - 1;
 				READ_ONCE(event->overflow_handler)(event, &data, regs);
@@ -11516,6 +11516,7 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 				READ_ONCE(event->overflow_handler)(event, &data, regs);
 			}
 		} else {
+			/* Inject every single offcpu samples */
 			if (sub_iteration > 0) {
 				for(; 0 < sub_iteration; sub_iteration--) {
 					READ_ONCE(event->overflow_handler)(event, &data, regs);
@@ -12368,12 +12369,16 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 				offcpu_ctxp->offcpu_subclass = 0;
 			} else if (need_offcpu_sampling(task)) {
 				/* Otherwise, start offcpu sampling from now. */
-				offcpu_ctxp->sched_out_timetstamp = perf_clock();
+				offcpu_ctxp->sched_out_timestamp = perf_clock();
 				if (!task->__state) {
 					offcpu_ctxp->wakeup_timestamp = offcpu_ctxp->sched_out_timestamp;
 					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 				} else {
-					if (current->in_iowait)
+					/* Will be recorded at wake-up. */
+					offcpu_ctxp->wakeup_timestamp = 0;
+
+					/* Newly designate the offcpu subclass. */
+					if (task->in_iowait)
 						offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_IOWAIT;
 					else if (offcpu_ctxp->in_lockwait)
 						offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_LOCKWAIT;
@@ -13598,8 +13603,6 @@ void perf_event_exit_task(struct task_struct *child)
 	mutex_lock(&child->perf_event_mutex);
 	list_for_each_entry_safe(event, tmp, &child->perf_event_list,
 				 owner_entry) {
-		if (is_offcpu_sampling_event(event) && need_offcpu_sampling(child))
-			printk(KERN_INFO "need to add perf_event_plus %d", child->pid);
 		list_del_init(&event->owner_entry);
 
 		/*
