@@ -3595,7 +3595,7 @@ perf_event_context_sched_out(struct task_struct *task, struct task_struct *next)
 		goto unlock;
 
 	/* If next task needs offcpu sampling, enforce do_switch. */
-	if (need_offcpu_sampling(next))
+	if (offcpu_sampling_enabled(task) || need_offcpu_sampling(next))
 		goto unlock;
 
 	if (next_parent == ctx || next_ctx == parent || next_parent == parent) {
@@ -11428,7 +11428,7 @@ static void task_clock_event_stop(struct perf_event *event, int flags)
 
 static int task_clock_event_add(struct perf_event *event, int flags)
 {
-	if (!is_sampling_task_clock_plus(event))
+	if (!is_offcpu_sampling_event(event))
 		goto out;
 
 	if (unlikely(!need_offcpu_sampling(current)))
@@ -11552,7 +11552,7 @@ static void task_clock_event_del(struct perf_event *event, int flags)
 	task_clock_event_stop(event, PERF_EF_UPDATE);
 
 	/* Offcpu subclass designation if sampling task-clock-plus */
-	if (is_sampling_task_clock_plus(event)) {
+	if (is_offcpu_sampling_event(event)) {
 		struct perf_event_offcpu_context *offcpu_ctxp = current->perf_event_offcpu_ctxp;
 		if (!current->__state)
 			offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
@@ -12356,8 +12356,11 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 
 	if (task) {
 		/* Initialize perf_event_offcpu_ctxp of task (if allocated) considering the state of it. */
-		if (is_sampling_task_clock_plus(event) && task->perf_event_offcpu_ctxp) {
+		if (is_offcpu_sampling_event(event) && task->perf_event_offcpu_ctxp) {
 			struct perf_event_offcpu_context *offcpu_ctxp = task->perf_event_offcpu_ctxp;
+
+			offcpu_ctxp->enabled = true;
+
 			if (task->on_cpu) {
 				/* If task is running, clear the perf_event_offcpu_ctxp */
 				offcpu_ctxp->sched_out_timestamp = 0;
@@ -13596,6 +13599,8 @@ void perf_event_exit_task(struct task_struct *child)
 	mutex_lock(&child->perf_event_mutex);
 	list_for_each_entry_safe(event, tmp, &child->perf_event_list,
 				 owner_entry) {
+		if (is_offcpu_sampling_event(event) && need_offcpu_sampling(child))
+			printk(KERN_INFO "need to add perf_event_plus %d", child->pid);
 		list_del_init(&event->owner_entry);
 
 		/*
@@ -14065,7 +14070,8 @@ int perf_event_init_task(struct task_struct *child, u64 clone_flags)
 	child->perf_event_offcpu_ctxp->sched_out_timestamp = 0;
 	child->perf_event_offcpu_ctxp->wakeup_timestamp = 0;
 	child->perf_event_offcpu_ctxp->offcpu_subclass = 0;
-	child->perf_event_offcpu_ctxp->in_lockwait = 0;
+	child->perf_event_offcpu_ctxp->in_lockwait = false;
+	child->perf_event_offcpu_ctxp->enabled = true;
 
 	return 0;
 }

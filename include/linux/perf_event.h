@@ -958,13 +958,19 @@ struct perf_event_offcpu_context {
 	u64	sched_out_timestamp;
 	u64	wakeup_timestamp;
 	u8	offcpu_subclass;
+	/* Is sampling task_clock_plus enabled? */
+	bool	enabled;
+	/* Is offcpu period caused by lock-waiting (i.e., futex)? */
 	bool	in_lockwait;
 };
 
 /* Macros for offcpu sampling */
-#define is_sampling_task_clock_plus(event)	\
+#define is_offcpu_sampling_event(event)	\
 	(event->attr.config == PERF_COUNT_SW_TASK_CLOCK_PLUS &&	\
 	 is_sampling_event(event))
+
+#define offcpu_sampling_enabled(tsk)	\
+	(tsk->perf_event_offcpu_ctxp->enabled)
 
 #define need_offcpu_sampling(tsk)	\
 	(tsk->perf_event_offcpu_ctxp->sched_out_timestamp)
