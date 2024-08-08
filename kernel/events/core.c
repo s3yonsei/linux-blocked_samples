@@ -11431,6 +11431,10 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	if (!is_offcpu_sampling_event(event))
 		goto out;
 
+	/*
+	 * Scheduled-in, but never scheduled-out.
+	 * e.g., first wakeup of newly forked tasks.
+	 */
 	if (unlikely(!need_offcpu_sampling(current)))
 		goto out;
 
