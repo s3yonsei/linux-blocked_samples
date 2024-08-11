@@ -11482,6 +11482,8 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	s64 delta = 0, iteration = 0, sub_iteration = 0;
 	s64 period_left, new_period_left, period;
 
+	int ret = 0;
+
 	hwc = &event->hw;
 	period = (s64)hwc->sample_period;
 	delta = (s64)(perf_clock() - sched_out_timestamp);
@@ -11502,6 +11504,9 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 
 	perf_sample_data_init(&data, 0, period);
 	regs = task_pt_regs(current);
+	//regs = this_cpu_ptr(&__perf_regs[0]);
+
+	printk(KERN_INFO "[event_add start] pid: %d subclass: %d sched_out: %llu iter: %lld sub_iter: %lld", current->pid, current->perf_event_offcpu_ctxp->offcpu_subclass, current->perf_event_offcpu_ctxp->sched_out_timestamp, iteration, sub_iteration);
 
 	/* Inject offcpu samples */
 	if (iteration > 0) {
@@ -11514,10 +11519,12 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 					data.weight.full = iteration - sub_iteration - 1;
 					READ_ONCE(event->overflow_handler)(event, &data, regs);
+					//ret = __perf_event_overflow(event, 0, &data, regs);
 				}
 			} else {
 				data.weight.full = iteration - 1;
 				READ_ONCE(event->overflow_handler)(event, &data, regs);
+				//ret = __perf_event_overflow(event, 0, &data, regs);
 			}
 		} else {
 			/* Inject every single offcpu samples */
@@ -11544,6 +11551,7 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	offcpu_ctxp->wakeup_timestamp = 0;
 	offcpu_ctxp->offcpu_subclass = 0;
 
+	printk(KERN_INFO "[event_add end] pid: %d ret: %d", current->pid, ret);
 out:
 	if (flags & PERF_EF_START)
 		task_clock_event_start(event, flags);
@@ -11570,6 +11578,7 @@ static void task_clock_event_del(struct perf_event *event, int flags)
 
 		offcpu_ctxp->sched_out_timestamp = perf_clock();
 		offcpu_ctxp->wakeup_timestamp = 0;
+		printk(KERN_INFO "[event_del] pid: %d subclass: %d sched_out: %llu", current->pid, offcpu_ctxp->offcpu_subclass, offcpu_ctxp->sched_out_timestamp);
 	}
 }
 
