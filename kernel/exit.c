@@ -947,8 +947,6 @@ void __noreturn do_exit(long code)
 	 */
 	perf_event_exit_task(tsk);
 	/* Free perf_event_offcpu_ctxp */
-	if (tsk->perf_event_offcpu_ctxp->sched_out_timestamp)
-		printk(KERN_INFO "[exit] pid: %d subclass: %d sched_out: %llu", tsk->pid, tsk->perf_event_offcpu_ctxp->offcpu_subclass, tsk->perf_event_offcpu_ctxp->sched_out_timestamp);
 	if (likely(tsk->perf_event_offcpu_ctxp))
 		kfree(tsk->perf_event_offcpu_ctxp);
 

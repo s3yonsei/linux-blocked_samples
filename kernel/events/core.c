@@ -8069,9 +8069,6 @@ __perf_event_output(struct perf_event *event,
 	if (err)
 		goto exit;
 
-	if (data->weight.full > 5000)
-		printk(KERN_INFO "[before output] pid: %d subclass: %d sched_out: %llu weight: %lld enabled: %d", current->pid, current->perf_event_offcpu_ctxp->offcpu_subclass, current->perf_event_offcpu_ctxp->sched_out_timestamp, data->weight.full, current->perf_event_offcpu_ctxp->enabled);
-
 	perf_output_sample(&handle, &header, data, event);
 
 	perf_output_end(&handle);
@@ -11440,7 +11437,7 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	 */
 	if (unlikely(!need_offcpu_sampling(current)))
 		goto out;
-	
+
 	/* (Logical flows)
 	 * 1. Calculating the number of offcpu samples to be injected.
 	 * 2. Initialize perf_sample_data.
@@ -11485,8 +11482,6 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	s64 delta = 0, iteration = 0, sub_iteration = 0;
 	s64 period_left, new_period_left, period;
 
-	int ret = 0;
-
 	hwc = &event->hw;
 	period = (s64)hwc->sample_period;
 	delta = (s64)(perf_clock() - sched_out_timestamp);
@@ -11507,7 +11502,6 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 
 	perf_sample_data_init(&data, 0, period);
 	regs = task_pt_regs(current);
-	//regs = this_cpu_ptr(&__perf_regs[0]);
 
 	/* Inject offcpu samples */
 	if (iteration > 0) {
@@ -11520,12 +11514,10 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 					data.weight.full = iteration - sub_iteration - 1;
 					READ_ONCE(event->overflow_handler)(event, &data, regs);
-					//ret = __perf_event_overflow(event, 0, &data, regs);
 				}
 			} else {
 				data.weight.full = iteration - 1;
 				READ_ONCE(event->overflow_handler)(event, &data, regs);
-				//ret = __perf_event_overflow(event, 0, &data, regs);
 			}
 		} else {
 			/* Inject every single offcpu samples */
@@ -11547,8 +11539,6 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 		}
 	}
 	local64_set(&hwc->period_left, new_period_left);
-
-	printk(KERN_INFO "[event_add start] pid: %d subclass: %d sched_out: %llu iter: %lld sub_iter: %lld enabled: %d", current->pid, current->perf_event_offcpu_ctxp->offcpu_subclass, current->perf_event_offcpu_ctxp->sched_out_timestamp, iteration, sub_iteration, current->perf_event_offcpu_ctxp->enabled);
 
 	offcpu_ctxp->sched_out_timestamp = 0;
 	offcpu_ctxp->wakeup_timestamp = 0;
@@ -11580,7 +11570,6 @@ static void task_clock_event_del(struct perf_event *event, int flags)
 
 		offcpu_ctxp->sched_out_timestamp = perf_clock();
 		offcpu_ctxp->wakeup_timestamp = 0;
-		printk(KERN_INFO "[event_del] pid: %d subclass: %d sched_out: %llu enabled: %d", current->pid, offcpu_ctxp->offcpu_subclass, offcpu_ctxp->sched_out_timestamp, current->perf_event_offcpu_ctxp->enabled);
 	}
 }
 
