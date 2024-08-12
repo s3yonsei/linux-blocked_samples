@@ -3595,7 +3595,7 @@ perf_event_context_sched_out(struct task_struct *task, struct task_struct *next)
 		goto unlock;
 
 	/* If tasks (task or next) need offcpu sampling, enforce do_switch. */
-	if (offcpu_sampling_enabled(task) || need_offcpu_sampling(next))
+	if (offcpu_sampling_enabled(task) || offcpu_sampling_enabled(next) || need_offcpu_sampling(next))
 		goto unlock;
 
 	if (next_parent == ctx || next_ctx == parent || next_parent == parent) {
@@ -8015,7 +8015,7 @@ void perf_prepare_header(struct perf_event_header *header,
 	 * If sampling event and offcpu context of current is set, misc of
          * header must be set as follows.
 	 */
-	if (is_sampling_event(event) && need_offcpu_sampling(current)) {
+	if (is_offcpu_sampling_event(event) && need_offcpu_sampling(current)) {
 		switch (current->perf_event_offcpu_ctxp->offcpu_subclass) {
 			case PERF_EVENT_OFFCPU_ETC:
 				header->misc |= PERF_RECORD_MISC_OFFCPU_BLOCKED;
@@ -8068,6 +8068,9 @@ __perf_event_output(struct perf_event *event,
 	err = output_begin(&handle, data, event, header.size);
 	if (err)
 		goto exit;
+
+	if (data->weight.full > 5000)
+		printk(KERN_INFO "[before output] pid: %d subclass: %d sched_out: %llu weight: %lld enabled: %d", current->pid, current->perf_event_offcpu_ctxp->offcpu_subclass, current->perf_event_offcpu_ctxp->sched_out_timestamp, data->weight.full, current->perf_event_offcpu_ctxp->enabled);
 
 	perf_output_sample(&handle, &header, data, event);
 
@@ -11437,7 +11440,7 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	 */
 	if (unlikely(!need_offcpu_sampling(current)))
 		goto out;
-
+	
 	/* (Logical flows)
 	 * 1. Calculating the number of offcpu samples to be injected.
 	 * 2. Initialize perf_sample_data.
@@ -11445,7 +11448,7 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	 *
 	 * (Used variables)
 	 * - delta: Total length of offcpu period.
-	 * - iteration: Total # of offcpu samples.
+	 * - iteration: Total # of offcpu samples (X^Y in the figure below).
 	 * - sub_iteration: Total # of offcpu samples before wakeup (X in the figure below).
 	 * - period: sampling period.
 	 * - period_left: remained time until next sampling.
@@ -11506,8 +11509,6 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	regs = task_pt_regs(current);
 	//regs = this_cpu_ptr(&__perf_regs[0]);
 
-	printk(KERN_INFO "[event_add start] pid: %d subclass: %d sched_out: %llu iter: %lld sub_iter: %lld", current->pid, current->perf_event_offcpu_ctxp->offcpu_subclass, current->perf_event_offcpu_ctxp->sched_out_timestamp, iteration, sub_iteration);
-
 	/* Inject offcpu samples */
 	if (iteration > 0) {
 		if (event->attr.sample_type & PERF_SAMPLE_WEIGHT_TYPE) {
@@ -11547,11 +11548,12 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	}
 	local64_set(&hwc->period_left, new_period_left);
 
+	printk(KERN_INFO "[event_add start] pid: %d subclass: %d sched_out: %llu iter: %lld sub_iter: %lld enabled: %d", current->pid, current->perf_event_offcpu_ctxp->offcpu_subclass, current->perf_event_offcpu_ctxp->sched_out_timestamp, iteration, sub_iteration, current->perf_event_offcpu_ctxp->enabled);
+
 	offcpu_ctxp->sched_out_timestamp = 0;
 	offcpu_ctxp->wakeup_timestamp = 0;
 	offcpu_ctxp->offcpu_subclass = 0;
 
-	printk(KERN_INFO "[event_add end] pid: %d ret: %d", current->pid, ret);
 out:
 	if (flags & PERF_EF_START)
 		task_clock_event_start(event, flags);
@@ -11578,7 +11580,7 @@ static void task_clock_event_del(struct perf_event *event, int flags)
 
 		offcpu_ctxp->sched_out_timestamp = perf_clock();
 		offcpu_ctxp->wakeup_timestamp = 0;
-		printk(KERN_INFO "[event_del] pid: %d subclass: %d sched_out: %llu", current->pid, offcpu_ctxp->offcpu_subclass, offcpu_ctxp->sched_out_timestamp);
+		printk(KERN_INFO "[event_del] pid: %d subclass: %d sched_out: %llu enabled: %d", current->pid, offcpu_ctxp->offcpu_subclass, offcpu_ctxp->sched_out_timestamp, current->perf_event_offcpu_ctxp->enabled);
 	}
 }
 
@@ -13671,6 +13673,9 @@ void perf_event_free_task(struct task_struct *task)
 	struct perf_event_context *ctx;
 	struct perf_event *event, *tmp;
 
+	/* Free perf_event_offcpu_ctxp of child. */
+	kfree(task->perf_event_offcpu_ctxp);
+
 	ctx = rcu_access_pointer(task->perf_event_ctxp);
 	if (!ctx)
 		return;
@@ -14046,6 +14051,9 @@ static int perf_event_init_context(struct task_struct *child, u64 clone_flags)
 			child_ctx->parent_gen = parent_ctx->generation;
 		}
 		get_ctx(child_ctx->parent_ctx);
+
+		/* If offcpu sampling is enabled in parent (=current), inherit it. */
+		child->perf_event_offcpu_ctxp->enabled = current->perf_event_offcpu_ctxp->enabled;
 	}
 
 	raw_spin_unlock_irqrestore(&parent_ctx->lock, flags);
@@ -14071,12 +14079,6 @@ int perf_event_init_task(struct task_struct *child, u64 clone_flags)
 	mutex_init(&child->perf_event_mutex);
 	INIT_LIST_HEAD(&child->perf_event_list);
 
-	ret = perf_event_init_context(child, clone_flags);
-	if (ret) {
-		perf_event_free_task(child);
-		return ret;
-	}
-
 	/* Initialize the perf_event_offcpu context in task_struct */
 	child->perf_event_offcpu_ctxp = kzalloc(sizeof(struct perf_event_offcpu_context), GFP_KERNEL);
 	if (!child->perf_event_offcpu_ctxp)
@@ -14087,6 +14089,12 @@ int perf_event_init_task(struct task_struct *child, u64 clone_flags)
 	child->perf_event_offcpu_ctxp->offcpu_subclass = 0;
 	child->perf_event_offcpu_ctxp->in_lockwait = false;
 	child->perf_event_offcpu_ctxp->enabled = false;
+
+	ret = perf_event_init_context(child, clone_flags);
+	if (ret) {
+		perf_event_free_task(child);
+		return ret;
+	}
 
 	return 0;
 }
