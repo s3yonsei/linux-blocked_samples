@@ -7792,6 +7792,25 @@ static u64 perf_get_page_size(unsigned long addr)
 
 static struct perf_callchain_entry __empty_callchain = { .nr = 0, };
 
+/*
+ * Remove entries until schedule().
+ * If waiting for I/O (i.e., IOWAIT), remove entries until io_schedule().
+ */
+#define NR_REMOVE_IOWAIT	12
+#define NR_REMOVE_OFFCPU	11
+
+static void
+perf_callchain_remove(struct perf_callchain_entry *callchain, int nr_remove) {
+	int iter;
+
+	WARN_ON(nr_remove > callchain->nr);
+
+	for (iter = 1; iter < (callchain->nr - nr_remove); iter++)
+		callchain->ip[iter] = callchain->ip[iter + nr_remove];
+
+	callchain->nr -= nr_remove;
+}
+
 struct perf_callchain_entry *
 perf_callchain(struct perf_event *event, struct pt_regs *regs)
 {
@@ -7807,6 +7826,21 @@ perf_callchain(struct perf_event *event, struct pt_regs *regs)
 
 	callchain = get_perf_callchain(regs, 0, kernel, user,
 				       max_stack, crosstask, true);
+
+	/* Remove unnecessary (common) entries in callchain of the offcpu samples. */
+	if (is_offcpu_sampling_event(event) && need_offcpu_sampling(current) && callchain) {
+		struct perf_event_offcpu_context *offcpu_ctxp = current->perf_event_offcpu_ctxp;
+
+		WARN_ON(!offcpu_ctxp);
+
+		if (offcpu_ctxp->offcpu_subclass == PERF_EVENT_OFFCPU_IOWAIT)
+			perf_callchain_remove(callchain, NR_REMOVE_IOWAIT);
+		else {
+			WARN_ON(!offcpu_ctxp->offcpu_subclass);
+			perf_callchain_remove(callchain, NR_REMOVE_OFFCPU);
+		}
+	}
+
 	return callchain ?: &__empty_callchain;
 }
 
@@ -7848,8 +7882,12 @@ void perf_prepare_sample(struct perf_sample_data *data,
 		data->sample_flags |= PERF_SAMPLE_IP;
 	}
 
-	if (filtered_sample_type & PERF_SAMPLE_CALLCHAIN)
+	if (filtered_sample_type & PERF_SAMPLE_CALLCHAIN) {
 		perf_sample_save_callchain(data, event, regs);
+
+		if (is_offcpu_sampling_event(event) && need_offcpu_sampling(current))
+			data->ip = data->callchain->ip[1];
+	}
 
 	if (filtered_sample_type & PERF_SAMPLE_RAW) {
 		data->raw = NULL;
@@ -11501,7 +11539,9 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 		new_period_left = 0;
 
 	perf_sample_data_init(&data, 0, period);
-	regs = task_pt_regs(current);
+
+	regs = this_cpu_ptr(&__perf_regs[0]);
+	perf_fetch_caller_regs(regs);
 
 	/* Inject offcpu samples */
 	if (iteration > 0) {
