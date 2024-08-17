@@ -2297,7 +2297,7 @@ static void process_event(struct perf_script *script,
 					break;
 			};
 
-			fprintf(fp, "%*s [%c:%lu]: ", script->name_width, evname ?: "[unknown]", offcpu_subclass, sample->weight);
+			fprintf(fp, "%*s[%c:%lu]: ", script->name_width, evname ?: "[unknown]", offcpu_subclass, sample->weight);
 		} else
 			fprintf(fp, "%*s: ", script->name_width, evname ?: "[unknown]");
 	}
