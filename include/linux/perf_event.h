@@ -967,7 +967,9 @@ struct perf_event_offcpu_context {
 /* Macros for offcpu sampling */
 #define is_offcpu_sampling_event(event)	\
 	(event->attr.config == PERF_COUNT_SW_TASK_CLOCK_PLUS &&	\
-	 is_sampling_event(event))
+	 is_sampling_event(event) &&	\
+	 !event->attr.exclude_kernel &&	\
+	 !event->attr.exclude_callchain_kernel)
 
 #define offcpu_sampling_enabled(tsk)	\
 	(tsk->perf_event_offcpu_ctxp->enabled)
