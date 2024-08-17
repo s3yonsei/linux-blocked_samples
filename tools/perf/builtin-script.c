@@ -2276,30 +2276,7 @@ static void process_event(struct perf_script *script,
 		if (!script->name_width)
 			script->name_width = evlist__max_name_len(script->session->evlist);
 
-		if (sample->offcpu_subclass) {
-			char offcpu_subclass;
-
-			switch (sample->offcpu_subclass) {
-				case PERF_RECORD_MISC_OFFCPU_IOWAIT:
-					offcpu_subclass = 'I';
-					break;
-				case PERF_RECORD_MISC_OFFCPU_SCHED:
-					offcpu_subclass = 'S';
-					break;
-				case PERF_RECORD_MISC_OFFCPU_LOCKWAIT:
-					offcpu_subclass = 'L';
-					break;
-				case PERF_RECORD_MISC_OFFCPU_BLOCKED:
-					offcpu_subclass = 'B';
-					break;
-				default:
-					offcpu_subclass = '?';
-					break;
-			};
-
-			fprintf(fp, "%*s[%c:%lu]: ", script->name_width, evname ?: "[unknown]", offcpu_subclass, sample->weight);
-		} else
-			fprintf(fp, "%*s: ", script->name_width, evname ?: "[unknown]");
+		fprintf(fp, "%*s: ", script->name_width, evname ?: "[unknown]");
 	}
 
 	if (print_flags)
