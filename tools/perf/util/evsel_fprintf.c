@@ -167,6 +167,25 @@ int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
 				node_al.addr = addr;
 				node_al.map  = map__get(map);
 
+				if (first) {
+					switch (sample->offcpu_subclass) {
+						case PERF_RECORD_MISC_OFFCPU_IOWAIT:
+							printed += fprintf(fp, "[I]");
+							break;
+						case PERF_RECORD_MISC_OFFCPU_SCHED:
+							printed += fprintf(fp, "[S]");
+							break;
+						case PERF_RECORD_MISC_OFFCPU_LOCKWAIT:
+							printed += fprintf(fp, "[L]");
+							break;
+						case PERF_RECORD_MISC_OFFCPU_BLOCKED:
+							printed += fprintf(fp, "[B]");
+							break;
+						default:
+							break;
+					};
+				}
+
 				if (print_symoffset) {
 					printed += __symbol__fprintf_symname_offs(sym, &node_al,
 										  print_unknown_as_addr,
