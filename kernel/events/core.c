@@ -11553,28 +11553,28 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 				if (iteration - sub_iteration > 0) {
 					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 					data.weight.full = iteration - sub_iteration - 1;
-					READ_ONCE(event->overflow_handler)(event, &data, regs);
+					perf_event_overflow(event, &data, regs);
 				}
 			} else {
 				data.weight.full = iteration - 1;
-				READ_ONCE(event->overflow_handler)(event, &data, regs);
+				perf_event_overflow(event, &data, regs);
 			}
 		} else {
 			/* Inject every single offcpu samples */
 			if (sub_iteration > 0) {
 				for(; 0 < sub_iteration; sub_iteration--) {
-					READ_ONCE(event->overflow_handler)(event, &data, regs);
+					perf_event_overflow(event, &data, regs);
 					iteration--;
 				}
 
 				if (iteration > 0) {
 					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 					for(; 0 < iteration; iteration--)
-						READ_ONCE(event->overflow_handler)(event, &data, regs);
+						perf_event_overflow(event, &data, regs);
 				}
 			} else {
 				for(; 0 < iteration; iteration--)
-					READ_ONCE(event->overflow_handler)(event, &data, regs);
+					perf_event_overflow(event, &data, regs);
 			}
 		}
 	}
