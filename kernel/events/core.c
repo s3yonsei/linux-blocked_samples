@@ -430,6 +430,35 @@ int sysctl_perf_event_mlock __read_mostly = 512 + (PAGE_SIZE / 1024); /* 'free' 
 
 int sysctl_perf_event_sample_rate __read_mostly	= DEFAULT_MAX_SAMPLE_RATE;
 
+//////////////////////////////////////
+#define MAX_TENSOR_NAME_LEN	100
+int sysctl_g_context_tensor_id = (INT_MAX - 1);
+char sysctl_g_context_tensor_name[MAX_TENSOR_NAME_LEN] = "";
+
+static struct ctl_table g_context_sysctls[] = {
+	{
+		.procname	= "g_context_tensor_id",
+		.data		= &sysctl_g_context_tensor_id,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec, 
+	},
+	{
+		.procname	= "g_context_tensor_name",
+		.data		= &sysctl_g_context_tensor_name,
+		.maxlen		= MAX_TENSOR_NAME_LEN,
+		.mode		= 0644,
+		.proc_handler	= proc_dostring,
+	},
+};
+
+static int __init g_context_sysctl_init(void)
+{
+	register_sysctl_init("kernel", g_context_sysctls);
+	return 0;
+}
+late_initcall(g_context_sysctl_init);
+
 static int max_samples_per_tick __read_mostly	= DIV_ROUND_UP(DEFAULT_MAX_SAMPLE_RATE, HZ);
 static int perf_sample_period_ns __read_mostly	= DEFAULT_SAMPLE_PERIOD_NS;
 
@@ -7839,6 +7868,13 @@ void perf_prepare_sample(struct perf_sample_data *data,
 	if (filtered_sample_type & PERF_SAMPLE_WEIGHT_TYPE) {
 		/* weight field is used for offcpu sampling */
 		if (!need_offcpu_sampling(current))	data->weight.full = 0;
+		
+		data->weight.full <<= 12;
+		if (sysctl_g_context_tensor_id < (1 << 12))
+			data->weight.full += sysctl_g_context_tensor_id;
+		else
+			data->weight.full += ((1<<12) - 1);
+
 		data->sample_flags |= PERF_SAMPLE_WEIGHT_TYPE;
 	}
 

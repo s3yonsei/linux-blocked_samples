@@ -161,6 +161,7 @@ int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
 
 			if (print_sym) {
 				struct addr_location node_al;
+				int id;
 
 				addr_location__init(&node_al);
 				printed += fprintf(fp, " ");
@@ -168,22 +169,29 @@ int sample__fprintf_callchain(struct perf_sample *sample, int left_alignment,
 				node_al.map  = map__get(map);
 
 				if (first) {
+					printed += fprintf(fp, "[");
 					switch (sample->offcpu_subclass) {
 						case PERF_RECORD_MISC_OFFCPU_IOWAIT:
-							printed += fprintf(fp, "[I]");
+							printed += fprintf(fp, "I");
 							break;
 						case PERF_RECORD_MISC_OFFCPU_SCHED:
-							printed += fprintf(fp, "[S]");
+							printed += fprintf(fp, "S");
 							break;
 						case PERF_RECORD_MISC_OFFCPU_LOCKWAIT:
-							printed += fprintf(fp, "[L]");
+							printed += fprintf(fp, "L");
 							break;
 						case PERF_RECORD_MISC_OFFCPU_BLOCKED:
-							printed += fprintf(fp, "[B]");
+							printed += fprintf(fp, "B");
 							break;
 						default:
 							break;
 					};
+					printed += fprintf(fp, ":%lu", (sample->weight >> 12));
+					id = sample->weight & ((1<<12) - 1);
+					if (id != ((1<<12) - 1))
+						printed += fprintf(fp, ":%ld]", (sample->weight & ((1<<12) - 1)));
+					else
+						printed += fprintf(fp, ":]");
 				}
 
 				if (print_symoffset) {
