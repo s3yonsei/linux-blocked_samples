@@ -936,9 +936,9 @@ struct perf_event_groups {
 #define PERF_EVENT_OFFCPU_LOCKWAIT	0x8
 
 /*
- * struct perf_event_offcpu_context - offcpu event context structure
- * Used as a container for sampling offcpu task-clock event. This struct
- * is not shared between tasks.
+ * struct perf_event_storage - structure for offcpu context
+ * Used as a container for sampling offcpu events. This struct
+ * is not shared between threads.
  *
  * - sched_out_timestamp: timestamp at prepare_task_switch()
  * - wakeup_timestamp: timestamp at try_to_wake_up()
@@ -954,7 +954,7 @@ struct perf_event_groups {
  * - in_lockwait: flag for decide whether the offcpu_subclass is LOCK or not.
  */
 
-struct perf_event_offcpu_context {
+struct perf_event_local_storage {
 	u64	sched_out_timestamp;
 	u64	wakeup_timestamp;
 	u8	offcpu_subclass;
@@ -972,10 +972,10 @@ struct perf_event_offcpu_context {
 	 !event->attr.exclude_callchain_kernel)
 
 #define offcpu_sampling_enabled(tsk)	\
-	(tsk->perf_event_offcpu_ctxp->enabled)
+	(tsk->perf_event_storage->enabled)
 
 #define need_offcpu_sampling(tsk)	\
-	(tsk->perf_event_offcpu_ctxp->sched_out_timestamp)
+	(tsk->perf_event_storage->sched_out_timestamp)
 
 /**
  * struct perf_event_context - event context structure

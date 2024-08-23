@@ -65,7 +65,7 @@ struct mempolicy;
 struct nameidata;
 struct nsproxy;
 struct perf_event_context;
-struct perf_event_offcpu_context;
+struct perf_event_local_storage;
 struct pid_namespace;
 struct pipe_inode_info;
 struct rcu_node;
@@ -1293,7 +1293,7 @@ struct task_struct {
 #ifdef CONFIG_PERF_EVENTS
 	u8				perf_recursion[PERF_NR_CONTEXTS];
 	struct perf_event_context	*perf_event_ctxp;
-	struct perf_event_offcpu_context	*perf_event_offcpu_ctxp;
+	struct perf_event_local_storage	*perf_event_storage;
 	struct mutex			perf_event_mutex;
 	struct list_head		perf_event_list;
 #endif

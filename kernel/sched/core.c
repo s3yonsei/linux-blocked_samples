@@ -4274,7 +4274,7 @@ out:
 		ttwu_stat(p, task_cpu(p), wake_flags);
 #ifdef CONFIG_PERF_EVENTS
 		if (need_offcpu_sampling(p))
-			p->perf_event_offcpu_ctxp->wakeup_timestamp = local_clock();
+			p->perf_event_storage->wakeup_timestamp = local_clock();
 #endif
 	}
 

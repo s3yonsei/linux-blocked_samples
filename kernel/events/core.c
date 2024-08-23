@@ -7829,14 +7829,14 @@ perf_callchain(struct perf_event *event, struct pt_regs *regs)
 
 	/* Remove unnecessary (common) entries in callchain of the offcpu samples. */
 	if (is_offcpu_sampling_event(event) && need_offcpu_sampling(current) && callchain) {
-		struct perf_event_offcpu_context *offcpu_ctxp = current->perf_event_offcpu_ctxp;
+		struct perf_event_local_storage *local_storage = current->perf_event_storage;
 
-		WARN_ON(!offcpu_ctxp);
+		WARN_ON(!local_storage);
 
-		if (offcpu_ctxp->offcpu_subclass == PERF_EVENT_OFFCPU_IOWAIT)
+		if (local_storage->offcpu_subclass == PERF_EVENT_OFFCPU_IOWAIT)
 			perf_callchain_remove(callchain, NR_REMOVE_IOWAIT);
 		else {
-			WARN_ON(!offcpu_ctxp->offcpu_subclass);
+			WARN_ON(!local_storage->offcpu_subclass);
 			perf_callchain_remove(callchain, NR_REMOVE_OFFCPU);
 		}
 	}
@@ -8054,7 +8054,7 @@ void perf_prepare_header(struct perf_event_header *header,
          * header must be set as follows.
 	 */
 	if (is_offcpu_sampling_event(event) && need_offcpu_sampling(current)) {
-		switch (current->perf_event_offcpu_ctxp->offcpu_subclass) {
+		switch (current->perf_event_storage->offcpu_subclass) {
 			case PERF_EVENT_OFFCPU_ETC:
 				header->misc |= PERF_RECORD_MISC_OFFCPU_BLOCKED;
 				break;
@@ -11511,12 +11511,12 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 
 	struct hw_perf_event *hwc = &event->hw;
 	struct pt_regs *regs;
-	struct perf_event_offcpu_context *offcpu_ctxp = current->perf_event_offcpu_ctxp;
+	struct perf_event_local_storage *local_storage = current->perf_event_storage;
 	struct perf_sample_data data;
 
-	u64 sched_out_timestamp = offcpu_ctxp->sched_out_timestamp;
-	u64 wakeup_timestamp = offcpu_ctxp->wakeup_timestamp;
-	u64 offcpu_subclass = offcpu_ctxp->offcpu_subclass;
+	u64 sched_out_timestamp = local_storage->sched_out_timestamp;
+	u64 wakeup_timestamp = local_storage->wakeup_timestamp;
+	u64 offcpu_subclass = local_storage->offcpu_subclass;
 	s64 delta = 0, iteration = 0, sub_iteration = 0;
 	s64 period_left, new_period_left, period;
 
@@ -11551,7 +11551,7 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 				data.weight.full = sub_iteration - 1;
 				perf_event_overflow(event, &data, regs);
 				if (iteration - sub_iteration > 0) {
-					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
+					local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 					data.weight.full = iteration - sub_iteration - 1;
 					perf_event_overflow(event, &data, regs);
 				}
@@ -11568,7 +11568,7 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 				}
 
 				if (iteration > 0) {
-					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
+					local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 					for(; 0 < iteration; iteration--)
 						perf_event_overflow(event, &data, regs);
 				}
@@ -11580,9 +11580,9 @@ static int task_clock_event_add(struct perf_event *event, int flags)
 	}
 	local64_set(&hwc->period_left, new_period_left);
 
-	offcpu_ctxp->sched_out_timestamp = 0;
-	offcpu_ctxp->wakeup_timestamp = 0;
-	offcpu_ctxp->offcpu_subclass = 0;
+	local_storage->sched_out_timestamp = 0;
+	local_storage->wakeup_timestamp = 0;
+	local_storage->offcpu_subclass = 0;
 
 out:
 	if (flags & PERF_EF_START)
@@ -11598,18 +11598,18 @@ static void task_clock_event_del(struct perf_event *event, int flags)
 
 	/* Offcpu subclass designation if sampling task-clock-plus */
 	if (is_offcpu_sampling_event(event)) {
-		struct perf_event_offcpu_context *offcpu_ctxp = current->perf_event_offcpu_ctxp;
+		struct perf_event_local_storage *local_storage = current->perf_event_storage;
 		if (!current->__state)
-			offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
+			local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 		else if (current->in_iowait)
-			offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_IOWAIT;
-		else if (offcpu_ctxp->in_lockwait)
-			offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_LOCKWAIT;
+			local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_IOWAIT;
+		else if (local_storage->in_lockwait)
+			local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_LOCKWAIT;
 		else
-			offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_ETC;
+			local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_ETC;
 
-		offcpu_ctxp->sched_out_timestamp = perf_clock();
-		offcpu_ctxp->wakeup_timestamp = 0;
+		local_storage->sched_out_timestamp = perf_clock();
+		local_storage->wakeup_timestamp = 0;
 	}
 }
 
@@ -12400,34 +12400,34 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 		event->event_caps = parent_event->event_caps;
 
 	if (task) {
-		/* Initialize perf_event_offcpu_ctxp of task (if allocated) considering the state of it. */
-		if (is_offcpu_sampling_event(event) && task->perf_event_offcpu_ctxp) {
-			struct perf_event_offcpu_context *offcpu_ctxp = task->perf_event_offcpu_ctxp;
+		/* Initialize perf_event_storage of task (if allocated) considering the state of it. */
+		if (is_offcpu_sampling_event(event) && task->perf_event_storage) {
+			struct perf_event_local_storage *local_storage = task->perf_event_storage;
 
-			offcpu_ctxp->enabled = true;
+			local_storage->enabled = true;
 
 			if (task->on_cpu) {
-				/* If task is running, clear the perf_event_offcpu_ctxp */
-				offcpu_ctxp->sched_out_timestamp = 0;
-				offcpu_ctxp->wakeup_timestamp = 0;
-				offcpu_ctxp->offcpu_subclass = 0;
+				/* If task is running, clear the perf_event_storage */
+				local_storage->sched_out_timestamp = 0;
+				local_storage->wakeup_timestamp = 0;
+				local_storage->offcpu_subclass = 0;
 			} else if (need_offcpu_sampling(task)) {
 				/* Otherwise, start offcpu sampling from now. */
-				offcpu_ctxp->sched_out_timestamp = perf_clock();
+				local_storage->sched_out_timestamp = perf_clock();
 				if (!task->__state) {
-					offcpu_ctxp->wakeup_timestamp = offcpu_ctxp->sched_out_timestamp;
-					offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
+					local_storage->wakeup_timestamp = local_storage->sched_out_timestamp;
+					local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_SCHED;
 				} else {
 					/* Will be recorded at wake-up. */
-					offcpu_ctxp->wakeup_timestamp = 0;
+					local_storage->wakeup_timestamp = 0;
 
 					/* Newly designate the offcpu subclass. */
 					if (task->in_iowait)
-						offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_IOWAIT;
-					else if (offcpu_ctxp->in_lockwait)
-						offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_LOCKWAIT;
+						local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_IOWAIT;
+					else if (local_storage->in_lockwait)
+						local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_LOCKWAIT;
 					else
-						offcpu_ctxp->offcpu_subclass = PERF_EVENT_OFFCPU_ETC;
+						local_storage->offcpu_subclass = PERF_EVENT_OFFCPU_ETC;
 				}
 			}
 		}
@@ -13702,8 +13702,8 @@ void perf_event_free_task(struct task_struct *task)
 	struct perf_event_context *ctx;
 	struct perf_event *event, *tmp;
 
-	/* Free perf_event_offcpu_ctxp of child. */
-	kfree(task->perf_event_offcpu_ctxp);
+	/* Free perf_event_storage of child. */
+	kfree(task->perf_event_storage);
 
 	ctx = rcu_access_pointer(task->perf_event_ctxp);
 	if (!ctx)
@@ -14082,7 +14082,7 @@ static int perf_event_init_context(struct task_struct *child, u64 clone_flags)
 		get_ctx(child_ctx->parent_ctx);
 
 		/* If offcpu sampling is enabled in parent (=current), inherit it. */
-		child->perf_event_offcpu_ctxp->enabled = current->perf_event_offcpu_ctxp->enabled;
+		child->perf_event_storage->enabled = current->perf_event_storage->enabled;
 	}
 
 	raw_spin_unlock_irqrestore(&parent_ctx->lock, flags);
@@ -14104,20 +14104,20 @@ int perf_event_init_task(struct task_struct *child, u64 clone_flags)
 
 	memset(child->perf_recursion, 0, sizeof(child->perf_recursion));
 	child->perf_event_ctxp = NULL;
-	child->perf_event_offcpu_ctxp = NULL;
+	child->perf_event_storage = NULL;
 	mutex_init(&child->perf_event_mutex);
 	INIT_LIST_HEAD(&child->perf_event_list);
 
-	/* Initialize the perf_event_offcpu context in task_struct */
-	child->perf_event_offcpu_ctxp = kzalloc(sizeof(struct perf_event_offcpu_context), GFP_KERNEL);
-	if (!child->perf_event_offcpu_ctxp)
+	/* Initialize the perf_event_storage in task_struct */
+	child->perf_event_storage = kzalloc(sizeof(struct perf_event_local_storage), GFP_KERNEL);
+	if (!child->perf_event_storage)
 		return -ENOMEM;
 
-	child->perf_event_offcpu_ctxp->sched_out_timestamp = 0;
-	child->perf_event_offcpu_ctxp->wakeup_timestamp = 0;
-	child->perf_event_offcpu_ctxp->offcpu_subclass = 0;
-	child->perf_event_offcpu_ctxp->in_lockwait = false;
-	child->perf_event_offcpu_ctxp->enabled = false;
+	child->perf_event_storage->sched_out_timestamp = 0;
+	child->perf_event_storage->wakeup_timestamp = 0;
+	child->perf_event_storage->offcpu_subclass = 0;
+	child->perf_event_storage->in_lockwait = false;
+	child->perf_event_storage->enabled = false;
 
 	ret = perf_event_init_context(child, clone_flags);
 	if (ret) {
