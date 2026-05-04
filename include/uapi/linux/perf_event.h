@@ -131,6 +131,7 @@ enum perf_sw_ids {
 	PERF_COUNT_SW_DUMMY			= 9,
 	PERF_COUNT_SW_BPF_OUTPUT		= 10,
 	PERF_COUNT_SW_CGROUP_SWITCHES		= 11,
+	PERF_COUNT_SW_TASK_CLOCK_PLUS		= 12,
 
 	PERF_COUNT_SW_MAX,			/* non-ABI */
 };
@@ -772,11 +773,12 @@ struct perf_event_mmap_page {
  * The current state of perf_event_header::misc bits usage:
  * ('|' used bit, '-' unused bit)
  *
- *  012         CDEF
- *  |||---------||||
+ *  012345      CDEF
+ *  ||||||------||||
  *
  *  Where:
  *    0-2     CPUMODE_MASK
+ *    3-5     OFFCPU_MASK
  *
  *    C       PROC_MAP_PARSE_TIMEOUT
  *    D       MMAP_DATA / COMM_EXEC / FORK_EXEC / SWITCH_OUT
@@ -791,6 +793,14 @@ struct perf_event_mmap_page {
 #define PERF_RECORD_MISC_HYPERVISOR		(3 << 0)
 #define PERF_RECORD_MISC_GUEST_KERNEL		(4 << 0)
 #define PERF_RECORD_MISC_GUEST_USER		(5 << 0)
+
+/* Off-CPU subclass for task-clock-plus PERF_RECORD_SAMPLE events. */
+#define PERF_RECORD_MISC_OFFCPU_MASK		(7 << 3)
+#define PERF_RECORD_MISC_OFFCPU_NONE		(0 << 3)
+#define PERF_RECORD_MISC_OFFCPU_PREEMPT		(1 << 3)
+#define PERF_RECORD_MISC_OFFCPU_IOWAIT		(2 << 3)
+#define PERF_RECORD_MISC_OFFCPU_INTERRUPTIBLE	(3 << 3)
+#define PERF_RECORD_MISC_OFFCPU_UNINTERRUPTIBLE	(4 << 3)
 
 /*
  * Indicates that /proc/PID/maps parsing are truncated by time out.

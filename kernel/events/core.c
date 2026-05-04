@@ -5377,10 +5377,12 @@ alloc_perf_ctx_data(struct kmem_cache *ctx_cache, bool global, gfp_t gfp_flags)
 	if (!cd)
 		return NULL;
 
-	cd->data = kmem_cache_zalloc(ctx_cache, gfp_flags);
-	if (!cd->data) {
-		kfree(cd);
-		return NULL;
+	if (ctx_cache) {
+		cd->data = kmem_cache_zalloc(ctx_cache, gfp_flags);
+		if (!cd->data) {
+			kfree(cd);
+			return NULL;
+		}
 	}
 
 	cd->global = global;
@@ -5392,7 +5394,8 @@ alloc_perf_ctx_data(struct kmem_cache *ctx_cache, bool global, gfp_t gfp_flags)
 
 static void free_perf_ctx_data(struct perf_ctx_data *cd)
 {
-	kmem_cache_free(cd->ctx_cache, cd->data);
+	if (cd->ctx_cache)
+		kmem_cache_free(cd->ctx_cache, cd->data);
 	kfree(cd);
 }
 
@@ -5447,6 +5450,28 @@ attach_task_ctx_data(struct task_struct *task, struct kmem_cache *ctx_cache,
 
 		if (refcount_inc_not_zero(&old->refcount)) {
 			free_perf_ctx_data(cd); /* unused */
+			/*
+			 * Lazy-upgrade: @old was installed by an earlier
+			 * attach with ctx_cache=NULL (e.g. task-clock-plus).
+			 * Allocate ->data now so later readers (LBR) won't
+			 * dereference NULL. cmpxchg on ->data serialises
+			 * concurrent upgraders; smp_store_release publishes
+			 * ctx_cache so observers of ctx_cache != NULL also
+			 * see ->data != NULL.
+			 */
+			if (ctx_cache && !READ_ONCE(old->ctx_cache)) {
+				void *data;
+
+				data = kmem_cache_zalloc(ctx_cache, gfp_flags);
+				if (!data)
+					return -ENOMEM;
+
+				if (cmpxchg(&old->data, NULL, data)) {
+					kmem_cache_free(ctx_cache, data);
+					return 0;
+				}
+				smp_store_release(&old->ctx_cache, ctx_cache);
+			}
 			return 0;
 		}
 
@@ -5513,6 +5538,33 @@ alloc:
 	goto again;
 }
 
+static struct pmu perf_task_clock_plus;
+static void detach_task_ctx_data(struct task_struct *p);
+
+/*
+ * task-clock-plus enforces at most one sampling session per task.
+ * After the per-task ctx_data is attached, atomically claim the
+ * has_task_clock_plus flag on the cd; failure means another session
+ * is already active on this task and we reject with -EBUSY.
+ */
+static int task_clock_plus_reserve(struct perf_event *event)
+{
+	struct perf_ctx_data *cd;
+	int ret = 0;
+
+	if (event->pmu != &perf_task_clock_plus)
+		return 0;
+
+	scoped_guard (rcu) {
+		cd = rcu_dereference(event->hw.target->perf_ctx_data);
+		if (!cd)
+			return -ENOMEM;
+		if (cmpxchg(&cd->has_task_clock_plus, 0, 1))
+			ret = -EBUSY;
+	}
+	return ret;
+}
+
 static int
 attach_perf_ctx_data(struct perf_event *event)
 {
@@ -5520,11 +5572,18 @@ attach_perf_ctx_data(struct perf_event *event)
 	struct kmem_cache *ctx_cache = event->pmu->task_ctx_cache;
 	int ret;
 
+	if (task) {
+		ret = attach_task_ctx_data(task, ctx_cache, false, GFP_KERNEL);
+		if (ret)
+			return ret;
+		ret = task_clock_plus_reserve(event);
+		if (ret)
+			detach_task_ctx_data(task);
+		return ret;
+	}
+
 	if (!ctx_cache)
 		return -ENOMEM;
-
-	if (task)
-		return attach_task_ctx_data(task, ctx_cache, false, GFP_KERNEL);
 
 	ret = attach_global_ctx_data(ctx_cache);
 	if (ret)
@@ -5589,8 +5648,23 @@ static void detach_perf_ctx_data(struct perf_event *event)
 
 	event->attach_state &= ~PERF_ATTACH_TASK_DATA;
 
-	if (task)
+	if (task) {
+		/*
+		 * Release the task-clock-plus single-session reservation
+		 * set by task_clock_plus_reserve() before dropping the cd
+		 * refcount, so a subsequent perf_event_open() can succeed.
+		 */
+		if (event->pmu == &perf_task_clock_plus) {
+			struct perf_ctx_data *cd;
+
+			scoped_guard (rcu) {
+				cd = rcu_dereference(task->perf_ctx_data);
+				if (cd)
+					WRITE_ONCE(cd->has_task_clock_plus, 0);
+			}
+		}
 		return detach_task_ctx_data(task);
+	}
 
 	if (event->attach_state & PERF_ATTACH_GLOBAL_DATA) {
 		detach_global_ctx_data();
@@ -8798,6 +8872,31 @@ void perf_prepare_header(struct perf_event_header *header,
 	header->size = perf_sample_data_size(data, event);
 	header->misc = perf_misc_flags(event, regs);
 
+	/* Tag off-CPU task-clock-plus samples with their subclass. */
+	scoped_guard (rcu) {
+		struct perf_ctx_data *ctx_data =
+			rcu_dereference(current->perf_ctx_data);
+
+		if (need_offcpu_sampling(event, ctx_data)) {
+			switch (ctx_data->offcpu_subclass) {
+			case PERF_EVENT_OFFCPU_PREEMPT:
+				header->misc |= PERF_RECORD_MISC_OFFCPU_PREEMPT;
+				break;
+			case PERF_EVENT_OFFCPU_IOWAIT:
+				header->misc |= PERF_RECORD_MISC_OFFCPU_IOWAIT;
+				break;
+			case PERF_EVENT_OFFCPU_INTERRUPTIBLE:
+				header->misc |=
+					PERF_RECORD_MISC_OFFCPU_INTERRUPTIBLE;
+				break;
+			case PERF_EVENT_OFFCPU_UNINTERRUPTIBLE:
+				header->misc |=
+					PERF_RECORD_MISC_OFFCPU_UNINTERRUPTIBLE;
+				break;
+			}
+		}
+	}
+
 	/*
 	 * If you're adding more sample types here, you likely need to do
 	 * something about the overflowing header::size, like repurpose the
@@ -11259,6 +11358,7 @@ static void sw_perf_event_destroy(struct perf_event *event)
 
 static struct pmu perf_cpu_clock; /* fwd declaration */
 static struct pmu perf_task_clock;
+static struct pmu perf_task_clock_plus;
 
 static int perf_swevent_init(struct perf_event *event)
 {
@@ -11279,6 +11379,9 @@ static int perf_swevent_init(struct perf_event *event)
 		return -ENOENT;
 	case PERF_COUNT_SW_TASK_CLOCK:
 		event->attr.type = perf_task_clock.type;
+		return -ENOENT;
+	case PERF_COUNT_SW_TASK_CLOCK_PLUS:
+		event->attr.type = perf_task_clock_plus.type;
 		return -ENOENT;
 
 	default:
@@ -12516,6 +12619,344 @@ static struct pmu perf_task_clock = {
 	.start		= task_clock_event_start,
 	.stop		= task_clock_event_stop,
 	.read		= task_clock_event_read,
+};
+
+/*
+ * Software event: task time clock that also samples off-CPU periods
+ * between event_del (sched-out) and event_add (sched-in).
+ */
+
+static u64 task_clock_plus_wakeup_timestamp(struct task_struct *task)
+{
+#ifdef CONFIG_SCHED_INFO
+	/*
+	 * sched_info.last_queued is set to rq_clock(rq) on enqueue (wakeup)
+	 * and cleared on the next sched-in. It is only valid while the task
+	 * is enqueued but not yet on-CPU, which is exactly the wakeup window
+	 * we want to subtract from the off-CPU duration.
+	 *
+	 * Note this is rq_clock(), not perf_clock(); callers must compare it
+	 * only against another rq_clock() value or treat it as opaque.
+	 */
+	return task->sched_info.last_queued;
+#else
+	return 0;
+#endif
+}
+
+static void task_clock_plus_event_update(struct perf_event *event, u64 now)
+{
+	u64 prev;
+	s64 delta;
+
+	prev = local64_xchg(&event->hw.prev_count, now);
+	delta = now - prev;
+	local64_add(delta, &event->count);
+}
+
+static void task_clock_plus_event_start(struct perf_event *event, int flags)
+{
+	event->hw.state = 0;
+	local64_set(&event->hw.prev_count, event->ctx->time.time);
+	perf_swevent_start_hrtimer(event);
+}
+
+static void task_clock_plus_event_stop(struct perf_event *event, int flags)
+{
+	event->hw.state = PERF_HES_STOPPED;
+	perf_swevent_cancel_hrtimer(event);
+	if (flags & PERF_EF_UPDATE)
+		task_clock_plus_event_update(event, event->ctx->time.time);
+}
+
+/*
+ * Inject off-CPU samples covering [@from, @to) tagged with @subclass,
+ * advancing hwc->period_left so the next on-CPU hrtimer fires correctly.
+ *
+ *                                  delta = to - from
+ *                   <------------------------------------------->
+ *
+ *                period_left                               new_period_left
+ *                   <---->                                      <----->
+ * Sampling    on-cpu     B        B        B        B        B      on-cpu
+ *               |        |        |        |        |        |        |
+ *   Task    ________|...........................................|________
+ *              from ^                                           ^ to
+ *
+ *   iteration       = (period + delta - period_left) / period   (ceil)
+ *   new_period_left = period - ((period + delta - period_left) % period)
+ *
+ * The first sample fires period_left ns after @from, then one every period.
+ * After the last sample there is still new_period_left until @to: that
+ * remainder rolls over to the next segment (or to the next sched-out cycle
+ * if this is the final segment).
+ */
+static s64 task_clock_plus_inject_samples(struct perf_event *event,
+					  struct pt_regs *regs,
+					  u64 from, u64 to)
+{
+	struct hw_perf_event *hwc = &event->hw;
+	s64 period = (s64)hwc->sample_period;
+	s64 delta = (s64)(to - from);
+	s64 period_left;
+	s64 iteration;
+	struct perf_sample_data data;
+
+	if (!period || delta <= 0)
+		return 0;
+
+	period_left = local64_read(&hwc->period_left);
+	if (period_left < 0 || period_left > period)
+		period_left = 0;
+
+	if (delta < period_left) {
+		local64_set(&hwc->period_left, period_left - delta);
+		return 0;
+	}
+
+	iteration = (period + delta - period_left) / period;
+	period_left = period - ((period + delta - period_left) % period);
+	if (period_left < 0 || period_left > period)
+		period_left = 0;
+	local64_set(&hwc->period_left, period_left);
+
+	/*
+	 * The (delta < period_left) early-return above guarantees at least
+	 * one full period elapsed, so iteration must be >= 1. Warn loudly
+	 * if math drifts and skip the overflow injection to stay safe.
+	 */
+	if (WARN_ON_ONCE(iteration <= 0))
+		return 0;
+
+	perf_sample_data_init(&data, 0, period);
+
+	if (event->attr.sample_type & PERF_SAMPLE_WEIGHT_TYPE) {
+		/* Coalesce identical repeats via weight. */
+		data.weight.full = iteration - 1;
+		perf_event_overflow(event, &data, regs);
+	} else {
+		for (s64 i = 0; i < iteration; i++)
+			perf_event_overflow(event, &data, regs);
+	}
+
+	return iteration;
+}
+
+/*
+ * On sched-in: drain off-CPU samples accumulated since the last sched-out.
+ *
+ * If a wakeup_ts (rq enqueue time) is available and falls strictly inside
+ * (sched_out_ts, now), and @subclass is not PREEMPT, the off-CPU window is
+ * split into two segments tagged separately:
+ *
+ *   sched_out_ts             wakeup_ts                       now (sched_in)
+ *        |     @subclass         |        PERF_EVENT_OFFCPU_PREEMPT       |
+ *        |  (e.g. IOWAIT,        |       (runqueue wait after wakeup)     |
+ *        |   UN/INTERRUPTIBLE)   |                                        |
+ *        v                       v                                        v
+ *        |==== blocked phase ====|========= runnable phase ===============|
+ *
+ * Each segment is fed to task_clock_plus_inject_samples(), which carries
+ * period_left across the boundary so sample cadence stays continuous.
+ * Otherwise (no wakeup_ts, or @subclass == PREEMPT) the whole window is
+ * attributed to @subclass in a single call.
+ */
+static void task_clock_plus_event_offcpu_end(struct perf_event *event)
+{
+	struct perf_ctx_data *ctx_data;
+	struct pt_regs *regs;
+	u64 sched_out_ts, wakeup_ts, now;
+	u8 subclass;
+
+	rcu_read_lock();
+	ctx_data = rcu_dereference(current->perf_ctx_data);
+	if (WARN_ON_ONCE(!ctx_data))
+		goto out;
+	if (ctx_data->offcpu_subclass == PERF_EVENT_OFFCPU_NONE)
+		goto out;
+
+	subclass = ctx_data->offcpu_subclass;
+	sched_out_ts = ctx_data->sched_out_timestamp;
+	/*
+	 * Use the kernel-mode pt_regs captured at sched-out so the injected
+	 * samples report IP/callchain at the sched-out site rather than the
+	 * user entry frame returned by task_pt_regs(current).
+	 */
+	regs = &ctx_data->offcpu_regs;
+
+	now = perf_clock();
+	wakeup_ts = task_clock_plus_wakeup_timestamp(current);
+
+	/*
+	 * With a valid wakeup timestamp, split into [sched_out, wakeup)
+	 * tagged @subclass and [wakeup, now) tagged PREEMPT (runqueue wait).
+	 * Otherwise attribute the whole interval to @subclass.
+	 *
+	 * @subclass is read from ctx_data->offcpu_subclass above and is the
+	 * value perf_prepare_header() will see for the first inject; only the
+	 * second segment needs to overwrite it to PREEMPT.
+	 */
+	if (subclass != PERF_EVENT_OFFCPU_PREEMPT &&
+	    wakeup_ts && wakeup_ts > sched_out_ts && wakeup_ts < now) {
+		task_clock_plus_inject_samples(event, regs,
+					       sched_out_ts, wakeup_ts);
+		ctx_data->offcpu_subclass = PERF_EVENT_OFFCPU_PREEMPT;
+		task_clock_plus_inject_samples(event, regs,
+					       wakeup_ts, now);
+	} else {
+		task_clock_plus_inject_samples(event, regs,
+					       sched_out_ts, now);
+	}
+
+	/*
+	 * Single-session per task is enforced via has_task_clock_plus, so
+	 * no other reader is racing on these fields. Clear once here after
+	 * inject_samples() finished consuming the captured state.
+	 */
+	ctx_data->offcpu_subclass = PERF_EVENT_OFFCPU_NONE;
+	ctx_data->sched_out_timestamp = 0;
+out:
+	rcu_read_unlock();
+}
+
+/* On sched-out: capture off-CPU subclass and sched-out timestamp. */
+static void task_clock_plus_event_offcpu_start(struct perf_event *event)
+{
+	struct perf_ctx_data *ctx_data;
+	unsigned long state;
+	u8 subclass = PERF_EVENT_OFFCPU_NONE;
+
+	rcu_read_lock();
+	ctx_data = rcu_dereference(current->perf_ctx_data);
+	if (WARN_ON_ONCE(!ctx_data))
+		goto out;
+
+	state = READ_ONCE(current->__state);
+
+	/*
+	 * Check in_iowait first: a task waiting on I/O is parked in
+	 * TASK_UNINTERRUPTIBLE with in_iowait set, and we want it
+	 * classified as IOWAIT rather than plain UNINTERRUPTIBLE.
+	 * Other states (STOPPED, TRACED, PARKED, ...) stay NONE and
+	 * skip injection.
+	 */
+	if (current->in_iowait)
+		subclass = PERF_EVENT_OFFCPU_IOWAIT;
+	else if (state == TASK_RUNNING)
+		subclass = PERF_EVENT_OFFCPU_PREEMPT;
+	else if (state & TASK_INTERRUPTIBLE)
+		subclass = PERF_EVENT_OFFCPU_INTERRUPTIBLE;
+	else if (state & TASK_UNINTERRUPTIBLE)
+		subclass = PERF_EVENT_OFFCPU_UNINTERRUPTIBLE;
+
+	ctx_data->offcpu_subclass = subclass;
+	if (subclass != PERF_EVENT_OFFCPU_NONE) {
+		ctx_data->sched_out_timestamp = perf_clock();
+		/*
+		 * Capture the kernel-mode pt_regs of the sched-out site so
+		 * inject_samples() can deliver IP/callchain pointing at where
+		 * the task actually went off-CPU, instead of the user entry
+		 * frame returned by task_pt_regs(current).
+		 *
+		 * perf_fetch_caller_regs() requires a zero-filled pt_regs
+		 * (see comment above its definition).
+		 */
+		memset(&ctx_data->offcpu_regs, 0,
+		       sizeof(ctx_data->offcpu_regs));
+		perf_fetch_caller_regs(&ctx_data->offcpu_regs);
+	} else {
+		ctx_data->sched_out_timestamp = 0;
+	}
+out:
+	rcu_read_unlock();
+}
+
+static int task_clock_plus_event_add(struct perf_event *event, int flags)
+{
+	struct perf_ctx_data *ctx_data;
+
+	rcu_read_lock();
+	ctx_data = rcu_dereference(current->perf_ctx_data);
+	if (need_offcpu_sampling(event, ctx_data)) {
+		rcu_read_unlock();
+		task_clock_plus_event_offcpu_end(event);
+	} else {
+		rcu_read_unlock();
+	}
+
+	if (flags & PERF_EF_START)
+		task_clock_plus_event_start(event, flags);
+	perf_event_update_userpage(event);
+
+	return 0;
+}
+
+static void task_clock_plus_event_del(struct perf_event *event, int flags)
+{
+	task_clock_plus_event_stop(event, PERF_EF_UPDATE);
+
+	if (is_offcpu_sampling_event(event))
+		task_clock_plus_event_offcpu_start(event);
+}
+
+static void task_clock_plus_event_read(struct perf_event *event)
+{
+	u64 now = perf_clock();
+	u64 delta = now - event->ctx->time.stamp;
+	u64 time = event->ctx->time.time + delta;
+
+	task_clock_plus_event_update(event, time);
+}
+
+static int task_clock_plus_event_init(struct perf_event *event)
+{
+	if (event->attr.type != perf_task_clock_plus.type)
+		return -ENOENT;
+
+	if (event->attr.config != PERF_COUNT_SW_TASK_CLOCK_PLUS)
+		return -ENOENT;
+
+	/*
+	 * no branch sampling for software events
+	 */
+	if (has_branch_stack(event))
+		return -EOPNOTSUPP;
+
+	/*
+	 * task-clock-plus is per-task only: it needs a task to attach
+	 * perf_ctx_data to and to read scheduler state from on event_del.
+	 */
+	if (!event->hw.target)
+		return -EINVAL;
+
+	/*
+	 * Off-CPU sampling intrinsically observes events that happen inside
+	 * the kernel (sched-out/sched-in). Reject exclude_kernel so users
+	 * cannot ask for off-CPU samples while disallowing kernel-mode
+	 * sample reporting.
+	 */
+	if (event->attr.exclude_kernel)
+		return -EINVAL;
+
+	event->attach_state |= PERF_ATTACH_TASK_DATA;
+
+	perf_swevent_init_hrtimer(event);
+
+	return 0;
+}
+
+static struct pmu perf_task_clock_plus = {
+	.task_ctx_nr	= perf_sw_context,
+
+	.capabilities	= PERF_PMU_CAP_NO_NMI,
+	.dev		= PMU_NULL_DEV,
+
+	.event_init	= task_clock_plus_event_init,
+	.add		= task_clock_plus_event_add,
+	.del		= task_clock_plus_event_del,
+	.start		= task_clock_plus_event_start,
+	.stop		= task_clock_plus_event_stop,
+	.read		= task_clock_plus_event_read,
 };
 
 static void perf_pmu_nop_void(struct pmu *pmu)
@@ -15320,6 +15761,7 @@ void __init perf_event_init(void)
 	perf_pmu_register(&perf_swevent, "software", PERF_TYPE_SOFTWARE);
 	perf_pmu_register(&perf_cpu_clock, "cpu_clock", -1);
 	perf_pmu_register(&perf_task_clock, "task_clock", -1);
+	perf_pmu_register(&perf_task_clock_plus, "task_clock_plus", -1);
 	perf_tp_register();
 	perf_event_init_cpu(smp_processor_id());
 	register_reboot_notifier(&perf_reboot_notifier);
