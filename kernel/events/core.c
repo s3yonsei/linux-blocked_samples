@@ -12764,7 +12764,7 @@ static s64 task_clock_plus_inject_samples(struct perf_event *event,
 static void task_clock_plus_event_offcpu_end(struct perf_event *event)
 {
 	struct perf_ctx_data *ctx_data;
-	struct pt_regs *regs;
+	struct pt_regs regs;
 	u64 sched_out_ts, wakeup_ts, now;
 	u8 subclass;
 
@@ -12777,12 +12777,20 @@ static void task_clock_plus_event_offcpu_end(struct perf_event *event)
 
 	subclass = ctx_data->offcpu_subclass;
 	sched_out_ts = ctx_data->sched_out_timestamp;
+
 	/*
-	 * Use the kernel-mode pt_regs captured at sched-out so the injected
-	 * samples report IP/callchain at the sched-out site rather than the
+	 * Synthesize kernel-mode pt_regs at this sched-in callback. The
+	 * context switch restored the task's kernel stack to the same shape
+	 * it had at sched-out, so the unwind below this frame reaches the
+	 * blocking site (e.g. io_schedule_timeout) and the user-mode entry,
+	 * which is what we want the injected samples to report -- not the
 	 * user entry frame returned by task_pt_regs(current).
+	 *
+	 * perf_fetch_caller_regs() requires a zero-filled pt_regs (see the
+	 * comment above its definition).
 	 */
-	regs = &ctx_data->offcpu_regs;
+	memset(&regs, 0, sizeof(regs));
+	perf_fetch_caller_regs(&regs);
 
 	now = perf_clock();
 	wakeup_ts = task_clock_plus_wakeup_timestamp(current);
@@ -12798,13 +12806,13 @@ static void task_clock_plus_event_offcpu_end(struct perf_event *event)
 	 */
 	if (subclass != PERF_EVENT_OFFCPU_PREEMPT &&
 	    wakeup_ts && wakeup_ts > sched_out_ts && wakeup_ts < now) {
-		task_clock_plus_inject_samples(event, regs,
+		task_clock_plus_inject_samples(event, &regs,
 					       sched_out_ts, wakeup_ts);
 		ctx_data->offcpu_subclass = PERF_EVENT_OFFCPU_PREEMPT;
-		task_clock_plus_inject_samples(event, regs,
+		task_clock_plus_inject_samples(event, &regs,
 					       wakeup_ts, now);
 	} else {
-		task_clock_plus_inject_samples(event, regs,
+		task_clock_plus_inject_samples(event, &regs,
 					       sched_out_ts, now);
 	}
 
@@ -12850,23 +12858,10 @@ static void task_clock_plus_event_offcpu_start(struct perf_event *event)
 		subclass = PERF_EVENT_OFFCPU_UNINTERRUPTIBLE;
 
 	ctx_data->offcpu_subclass = subclass;
-	if (subclass != PERF_EVENT_OFFCPU_NONE) {
+	if (subclass != PERF_EVENT_OFFCPU_NONE)
 		ctx_data->sched_out_timestamp = perf_clock();
-		/*
-		 * Capture the kernel-mode pt_regs of the sched-out site so
-		 * inject_samples() can deliver IP/callchain pointing at where
-		 * the task actually went off-CPU, instead of the user entry
-		 * frame returned by task_pt_regs(current).
-		 *
-		 * perf_fetch_caller_regs() requires a zero-filled pt_regs
-		 * (see comment above its definition).
-		 */
-		memset(&ctx_data->offcpu_regs, 0,
-		       sizeof(ctx_data->offcpu_regs));
-		perf_fetch_caller_regs(&ctx_data->offcpu_regs);
-	} else {
+	else
 		ctx_data->sched_out_timestamp = 0;
-	}
 out:
 	rcu_read_unlock();
 }
