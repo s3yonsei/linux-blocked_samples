@@ -1082,16 +1082,13 @@ struct perf_event_context {
  * @global:    To track system-wide users
  * @ctx_cache: Kmem cache of PMU specific data
  * @data:      PMU specific data
- * @sched_out_timestamp:	Off-CPU sched-out rq_clock (task-clock-plus).
- * @sched_out_run_delay:	task->sched_info.run_delay snapshot at sched-out
- *				(task-clock-plus, used to split the runqueue
- *				wait tail from the blocked phase).
- * @offcpu_subclass:		Off-CPU subclass captured at sched-out
- *				(PERF_EVENT_OFFCPU_*); 0 means no pending sample.
+ * @sched_out_timestamp: Off-CPU sched-out timestamp (task-clock-plus,
+ *                       local_clock() at sched-out).
+ * @offcpu_subclass:     Off-CPU subclass captured at sched-out
+ *                       (PERF_EVENT_OFFCPU_*); 0 means no pending sample.
  *
  * Shared per-task storage: Intel LBR call stack mode uses @ctx_cache and
- * @data; task-clock-plus uses @sched_out_timestamp, @sched_out_run_delay,
- * and @offcpu_subclass (CONFIG_SCHED_INFO).
+ * @data; task-clock-plus uses @sched_out_timestamp and @offcpu_subclass.
  *
  * The rcu_head is used to prevent the race on free the data.
  * The data only be allocated when Intel LBR call stack mode is enabled.
@@ -1115,11 +1112,8 @@ struct perf_ctx_data {
 	int				global;
 	struct kmem_cache		*ctx_cache;
 	void				*data;
-#ifdef CONFIG_SCHED_INFO
 	u64				sched_out_timestamp;
-	u64				sched_out_run_delay;
 	u8				offcpu_subclass;
-#endif
 };
 
 /* Off-CPU subclasses for task-clock-plus, decided at sched-out. */
@@ -1133,13 +1127,9 @@ struct perf_ctx_data {
 	((event)->attr.config == PERF_COUNT_SW_TASK_CLOCK_PLUS &&	\
 	 is_sampling_event(event))
 
-#ifdef CONFIG_SCHED_INFO
 #define need_offcpu_sampling(event, ctx_data)				\
 	(is_offcpu_sampling_event(event) && (ctx_data) &&		\
 	 (ctx_data)->offcpu_subclass)
-#else
-#define need_offcpu_sampling(event, ctx_data)	false
-#endif
 
 struct perf_cpu_pmu_context {
 	struct perf_event_pmu_context	epc;
