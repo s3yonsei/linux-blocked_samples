@@ -12626,24 +12626,6 @@ static struct pmu perf_task_clock = {
  * between event_del (sched-out) and event_add (sched-in).
  */
 
-static u64 task_clock_plus_wakeup_timestamp(struct task_struct *task)
-{
-#ifdef CONFIG_SCHED_INFO
-	/*
-	 * sched_info.last_queued is set to rq_clock(rq) on enqueue (wakeup)
-	 * and cleared on the next sched-in. It is only valid while the task
-	 * is enqueued but not yet on-CPU, which is exactly the wakeup window
-	 * we want to subtract from the off-CPU duration.
-	 *
-	 * Note this is rq_clock(), not perf_clock(); callers must compare it
-	 * only against another rq_clock() value or treat it as opaque.
-	 */
-	return task->sched_info.last_queued;
-#else
-	return 0;
-#endif
-}
-
 static void task_clock_plus_event_update(struct perf_event *event, u64 now)
 {
 	u64 prev;
@@ -12744,29 +12726,18 @@ static s64 task_clock_plus_inject_samples(struct perf_event *event,
 
 /*
  * On sched-in: drain off-CPU samples accumulated since the last sched-out.
+ * The whole [sched_out_ts, now) window is attributed to the @subclass
+ * captured at sched-out.
  *
- * If a wakeup_ts (rq enqueue time) is available and falls strictly inside
- * (sched_out_ts, now), and @subclass is not PREEMPT, the off-CPU window is
- * split into two segments tagged separately:
- *
- *   sched_out_ts             wakeup_ts                       now (sched_in)
- *        |     @subclass         |        PERF_EVENT_OFFCPU_PREEMPT       |
- *        |  (e.g. IOWAIT,        |       (runqueue wait after wakeup)     |
- *        |   UN/INTERRUPTIBLE)   |                                        |
- *        v                       v                                        v
- *        |==== blocked phase ====|========= runnable phase ===============|
- *
- * Each segment is fed to task_clock_plus_inject_samples(), which carries
- * period_left across the boundary so sample cadence stays continuous.
- * Otherwise (no wakeup_ts, or @subclass == PREEMPT) the whole window is
- * attributed to @subclass in a single call.
+ * (Splitting the runqueue-wait tail into a PREEMPT segment would require a
+ * wakeup-time perf hook in the scheduler, since sched_info.last_queued is
+ * cleared by sched_info_arrive() before this callback runs. Not implemented.)
  */
 static void task_clock_plus_event_offcpu_end(struct perf_event *event)
 {
 	struct perf_ctx_data *ctx_data;
 	struct pt_regs regs;
-	u64 sched_out_ts, wakeup_ts, now;
-	u8 subclass;
+	u64 sched_out_ts, now;
 
 	rcu_read_lock();
 	ctx_data = rcu_dereference(current->perf_ctx_data);
@@ -12775,7 +12746,6 @@ static void task_clock_plus_event_offcpu_end(struct perf_event *event)
 	if (ctx_data->offcpu_subclass == PERF_EVENT_OFFCPU_NONE)
 		goto out;
 
-	subclass = ctx_data->offcpu_subclass;
 	sched_out_ts = ctx_data->sched_out_timestamp;
 
 	/*
@@ -12793,28 +12763,7 @@ static void task_clock_plus_event_offcpu_end(struct perf_event *event)
 	perf_fetch_caller_regs(&regs);
 
 	now = perf_clock();
-	wakeup_ts = task_clock_plus_wakeup_timestamp(current);
-
-	/*
-	 * With a valid wakeup timestamp, split into [sched_out, wakeup)
-	 * tagged @subclass and [wakeup, now) tagged PREEMPT (runqueue wait).
-	 * Otherwise attribute the whole interval to @subclass.
-	 *
-	 * @subclass is read from ctx_data->offcpu_subclass above and is the
-	 * value perf_prepare_header() will see for the first inject; only the
-	 * second segment needs to overwrite it to PREEMPT.
-	 */
-	if (subclass != PERF_EVENT_OFFCPU_PREEMPT &&
-	    wakeup_ts && wakeup_ts > sched_out_ts && wakeup_ts < now) {
-		task_clock_plus_inject_samples(event, &regs,
-					       sched_out_ts, wakeup_ts);
-		ctx_data->offcpu_subclass = PERF_EVENT_OFFCPU_PREEMPT;
-		task_clock_plus_inject_samples(event, &regs,
-					       wakeup_ts, now);
-	} else {
-		task_clock_plus_inject_samples(event, &regs,
-					       sched_out_ts, now);
-	}
+	task_clock_plus_inject_samples(event, &regs, sched_out_ts, now);
 
 	/*
 	 * Single-session per task is enforced via has_task_clock_plus, so
@@ -12925,13 +12874,18 @@ static int task_clock_plus_event_init(struct perf_event *event)
 		return -EINVAL;
 
 	/*
-	 * Off-CPU sampling intrinsically observes events that happen inside
-	 * the kernel (sched-out/sched-in). Reject exclude_kernel so users
-	 * cannot ask for off-CPU samples while disallowing kernel-mode
-	 * sample reporting.
+	 * exclude_* are honored by the generic sampling path:
+	 *
+	 *   - exclude_user / exclude_kernel are evaluated against the
+	 *     synthesized pt_regs in perf_exclude_event(), so an off-CPU
+	 *     sample (always kernel-mode regs) is dropped under
+	 *     exclude_kernel and kept under exclude_user.
+	 *
+	 *   - exclude_callchain_kernel / exclude_callchain_user trim the
+	 *     respective half of the callchain in get_perf_callchain().
+	 *
+	 * No combination needs to be rejected here.
 	 */
-	if (event->attr.exclude_kernel)
-		return -EINVAL;
 
 	event->attach_state |= PERF_ATTACH_TASK_DATA;
 
