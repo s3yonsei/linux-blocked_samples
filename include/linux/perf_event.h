@@ -1082,16 +1082,16 @@ struct perf_event_context {
  * @global:    To track system-wide users
  * @ctx_cache: Kmem cache of PMU specific data
  * @data:      PMU specific data
- * @sched_out_timestamp: Off-CPU sched-out timestamp (task-clock-plus).
- * @offcpu_subclass:     Off-CPU subclass captured at sched-out
- *                       (PERF_EVENT_OFFCPU_*); 0 means no pending sample.
- * @has_task_clock_plus: Single-session reservation flag for task-clock-plus;
- *                       set via cmpxchg in task_clock_plus_reserve() and
- *                       cleared in detach_perf_ctx_data().
+ * @sched_out_timestamp:	Off-CPU sched-out rq_clock (task-clock-plus).
+ * @sched_out_run_delay:	task->sched_info.run_delay snapshot at sched-out
+ *				(task-clock-plus, used to split the runqueue
+ *				wait tail from the blocked phase).
+ * @offcpu_subclass:		Off-CPU subclass captured at sched-out
+ *				(PERF_EVENT_OFFCPU_*); 0 means no pending sample.
  *
  * Shared per-task storage: Intel LBR call stack mode uses @ctx_cache and
- * @data; task-clock-plus uses @sched_out_timestamp, @offcpu_subclass,
- * and @has_task_clock_plus.
+ * @data; task-clock-plus uses @sched_out_timestamp, @sched_out_run_delay,
+ * and @offcpu_subclass (CONFIG_SCHED_INFO).
  *
  * The rcu_head is used to prevent the race on free the data.
  * The data only be allocated when Intel LBR call stack mode is enabled.
@@ -1115,9 +1115,11 @@ struct perf_ctx_data {
 	int				global;
 	struct kmem_cache		*ctx_cache;
 	void				*data;
+#ifdef CONFIG_SCHED_INFO
 	u64				sched_out_timestamp;
+	u64				sched_out_run_delay;
 	u8				offcpu_subclass;
-	u8				has_task_clock_plus;
+#endif
 };
 
 /* Off-CPU subclasses for task-clock-plus, decided at sched-out. */
@@ -1131,9 +1133,13 @@ struct perf_ctx_data {
 	((event)->attr.config == PERF_COUNT_SW_TASK_CLOCK_PLUS &&	\
 	 is_sampling_event(event))
 
+#ifdef CONFIG_SCHED_INFO
 #define need_offcpu_sampling(event, ctx_data)				\
 	(is_offcpu_sampling_event(event) && (ctx_data) &&		\
 	 (ctx_data)->offcpu_subclass)
+#else
+#define need_offcpu_sampling(event, ctx_data)	false
+#endif
 
 struct perf_cpu_pmu_context {
 	struct perf_event_pmu_context	epc;
