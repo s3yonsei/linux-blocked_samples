@@ -5412,6 +5412,37 @@ static inline void perf_free_ctx_data_rcu(struct perf_ctx_data *cd)
 	call_rcu(&cd->rcu_head, __free_perf_ctx_data_rcu);
 }
 
+/*
+ * Lazy-install ->data on an existing perf_ctx_data when the new attach
+ * needs a slab-backed buffer (e.g. LBR) but the existing cd was set up
+ * by an earlier attach without ctx_cache (e.g. task-clock-plus).
+ *
+ * cmpxchg on ->data serialises concurrent upgraders; smp_store_release
+ * publishes ctx_cache so observers of ctx_cache != NULL also see
+ * ->data != NULL.
+ */
+static int
+upgrade_ctx_data_with_cache(struct perf_ctx_data *cd,
+			    struct kmem_cache *ctx_cache, gfp_t gfp_flags)
+{
+	void *data;
+
+	if (!ctx_cache || READ_ONCE(cd->ctx_cache))
+		return 0;
+
+	data = kmem_cache_zalloc(ctx_cache, gfp_flags);
+	if (!data)
+		return -ENOMEM;
+
+	if (cmpxchg(&cd->data, NULL, data)) {
+		/* Another upgrader won; drop ours. */
+		kmem_cache_free(ctx_cache, data);
+		return 0;
+	}
+	smp_store_release(&cd->ctx_cache, ctx_cache);
+	return 0;
+}
+
 static int
 attach_task_ctx_data(struct task_struct *task, struct kmem_cache *ctx_cache,
 		     bool global, gfp_t gfp_flags)
@@ -5450,29 +5481,8 @@ attach_task_ctx_data(struct task_struct *task, struct kmem_cache *ctx_cache,
 
 		if (refcount_inc_not_zero(&old->refcount)) {
 			free_perf_ctx_data(cd); /* unused */
-			/*
-			 * Lazy-upgrade: @old was installed by an earlier
-			 * attach with ctx_cache=NULL (e.g. task-clock-plus).
-			 * Allocate ->data now so later readers (LBR) won't
-			 * dereference NULL. cmpxchg on ->data serialises
-			 * concurrent upgraders; smp_store_release publishes
-			 * ctx_cache so observers of ctx_cache != NULL also
-			 * see ->data != NULL.
-			 */
-			if (ctx_cache && !READ_ONCE(old->ctx_cache)) {
-				void *data;
-
-				data = kmem_cache_zalloc(ctx_cache, gfp_flags);
-				if (!data)
-					return -ENOMEM;
-
-				if (cmpxchg(&old->data, NULL, data)) {
-					kmem_cache_free(ctx_cache, data);
-					return 0;
-				}
-				smp_store_release(&old->ctx_cache, ctx_cache);
-			}
-			return 0;
+			return upgrade_ctx_data_with_cache(old, ctx_cache,
+							   gfp_flags);
 		}
 
 		/*
