@@ -209,6 +209,14 @@ int callchain_cursor_append(struct callchain_cursor *cursor, u64 ip,
 			    int nr_loop_iter, u64 iter_cycles, u64 branch_from,
 			    const char *srcline);
 
+/*
+ * Strip leading perf/scheduler frames from an off-CPU sample's callchain
+ * so the new leaf is the user-meaningful blocking site.  See definition
+ * for trim policy and IP adjustment rules.
+ */
+void callchain_cursor__trim_offcpu_prefix(struct callchain_cursor *cursor,
+					  u8 offcpu_subclass);
+
 /* Close a cursor writing session. Initialize for the reader */
 static inline void callchain_cursor_commit(struct callchain_cursor *cursor)
 {

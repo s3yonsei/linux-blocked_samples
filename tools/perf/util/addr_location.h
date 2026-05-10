@@ -17,6 +17,12 @@ struct addr_location {
 	u64	      addr;
 	char	      level;
 	u8	      cpumode;
+	/*
+	 * Off-CPU subclass (PERF_RECORD_MISC_OFFCPU_*), copied from
+	 * struct perf_sample by callers that want @level to reflect
+	 * the off-CPU state of task-clock-plus samples.
+	 */
+	u8	      offcpu_subclass;
 	u16	      filtered;
 	s32	      cpu;
 	s32	      socket;

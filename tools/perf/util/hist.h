@@ -295,6 +295,13 @@ struct hist_entry {
 	struct symbol		*parent;
 	struct branch_info	*branch_info;
 	long			time;
+	/*
+	 * Off-CPU subclass (PERF_RECORD_MISC_OFFCPU_*) carried over from the
+	 * sample.  Used as a hist key so task-clock-plus samples in the same
+	 * symbol but with different blocking reasons (e.g. IOWAIT vs
+	 * INTERRUPTIBLE) appear as distinct rows in perf report.
+	 */
+	u8			offcpu_subclass;
 	struct hists		*hists;
 	struct mem_info		*mem_info;
 	struct block_info	*block_info;

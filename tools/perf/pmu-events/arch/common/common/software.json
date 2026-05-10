@@ -90,5 +90,12 @@
     "EventName": "cgroup-switches",
     "BriefDescription": "Number of context switches to a task in a different cgroup",
     "ConfigCode": "11"
+  },
+  {
+    "Unit": "software",
+    "EventName": "task-clock-plus",
+    "BriefDescription": "Per-task high-resolution timer based event that includes off-CPU periods",
+    "ConfigCode": "12",
+    "ScaleUnit": "1e-6msec"
   }
 ]

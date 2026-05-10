@@ -1168,18 +1168,172 @@ int callchain_cursor_append(struct callchain_cursor *cursor,
 	return 0;
 }
 
+/*
+ * Leading frames to drop from off-CPU sample callchains: perf core
+ * synthesised the pt_regs at the sched-in side, so the unwind starts
+ * deep inside the scheduler entry path.  Stripping these frames keeps
+ * only the user-visible blocking site at the new leaf.
+ *
+ * Common scheduler entries are dropped for every off-CPU subclass.
+ * IOWAIT additionally drops io_schedule()/io_schedule_timeout() so the
+ * leaf becomes the I/O caller (e.g. submit_bio).
+ */
+static const char * const offcpu_trim_common[] = {
+	"__schedule",
+	"schedule",
+	"schedule_idle",
+	"schedule_preempt_disabled",
+	"preempt_schedule",
+	"preempt_schedule_irq",
+	"preempt_schedule_notrace",
+	NULL,
+};
+
+static const char * const offcpu_trim_iowait[] = {
+	"io_schedule",
+	"io_schedule_timeout",
+	NULL,
+};
+
+static bool offcpu_trim_match(const struct symbol *sym,
+			      const char * const *names)
+{
+	if (!sym)
+		return false;
+
+	for (; *names; names++) {
+		if (!strcmp(sym->name, *names))
+			return true;
+	}
+	return false;
+}
+
+static bool offcpu_trim_skip(const struct callchain_cursor_node *node,
+			     u8 offcpu_subclass)
+{
+	if (offcpu_trim_match(node->ms.sym, offcpu_trim_common))
+		return true;
+	if (offcpu_subclass == PERF_RECORD_MISC_OFFCPU_IOWAIT &&
+	    offcpu_trim_match(node->ms.sym, offcpu_trim_iowait))
+		return true;
+	return false;
+}
+
+/*
+ * Symbol attribution is unaffected by using the unadjusted return
+ * address as the new leaf, but srcline / inline / address callchain
+ * keys want the byte to land inside the originating call instruction.
+ * Apply the -1 adjustment only when the caller has opted into one of
+ * those line-precise display modes.
+ */
+static bool offcpu_trim_need_ip_adjust(void)
+{
+	return callchain_param.key != CCKEY_FUNCTION ||
+	       symbol_conf.inline_name;
+}
+
+static void offcpu_trim_promote_leaf(struct callchain_cursor_node *node)
+{
+	if (!node || !node->ip)
+		return;
+	if (offcpu_trim_need_ip_adjust())
+		node->ip -= 1;
+}
+
+/*
+ * Strip leading perf/scheduler frames from an off-CPU sample's
+ * callchain so the new leaf is the user-meaningful blocking site.
+ *
+ * Cursor frame order:
+ *   ORDER_CALLEE -- leaf first; trim from the head.
+ *   ORDER_CALLER -- root first; trim from the tail.
+ *
+ * If a boundary symbol is never found (callchain too short, kernel
+ * frames excluded by exclude_callchain_kernel, etc.) the cursor is
+ * left untouched: a partial chain is more useful than a wrong one.
+ */
+void callchain_cursor__trim_offcpu_prefix(struct callchain_cursor *cursor,
+					  u8 offcpu_subclass)
+{
+	struct callchain_cursor_node *node, *prev;
+	u64 dropped = 0;
+
+	if (!cursor || !cursor->nr ||
+	    offcpu_subclass == PERF_RECORD_MISC_OFFCPU_NONE)
+		return;
+
+	if (callchain_param.order == ORDER_CALLEE) {
+		node = cursor->first;
+		while (node && offcpu_trim_skip(node, offcpu_subclass)) {
+			dropped++;
+			node = node->next;
+		}
+		if (!dropped || !node)
+			return;
+
+		cursor->first = node;
+		cursor->nr -= dropped;
+		offcpu_trim_promote_leaf(node);
+		return;
+	}
+
+	/* ORDER_CALLER: walk to find the tail boundary. */
+	prev = NULL;
+	for (node = cursor->first; node; node = node->next) {
+		if (offcpu_trim_skip(node, offcpu_subclass))
+			break;
+		prev = node;
+	}
+	if (!prev || !node)
+		return;
+
+	while (node) {
+		dropped++;
+		node = node->next;
+	}
+	prev->next = NULL;
+	cursor->last = &prev->next;
+	cursor->nr -= dropped;
+	offcpu_trim_promote_leaf(prev);
+}
+
 int sample__resolve_callchain(struct perf_sample *sample,
 			      struct callchain_cursor *cursor, struct symbol **parent,
 			      struct evsel *evsel, struct addr_location *al,
 			      int max_stack)
 {
+	int err;
+
 	if (sample->callchain == NULL && !symbol_conf.show_branchflag_count)
 		return 0;
 
-	if (symbol_conf.use_callchain || symbol_conf.cumulate_callchain ||
-	    perf_hpp_list.parent || symbol_conf.show_branchflag_count) {
-		return thread__resolve_callchain(al->thread, cursor, evsel, sample,
-						 parent, al, max_stack);
+	if (!(symbol_conf.use_callchain || symbol_conf.cumulate_callchain ||
+	      perf_hpp_list.parent || symbol_conf.show_branchflag_count))
+		return 0;
+
+	err = thread__resolve_callchain(al->thread, cursor, evsel, sample,
+					parent, al, max_stack);
+	if (err)
+		return err;
+
+	callchain_cursor__trim_offcpu_prefix(cursor, sample->offcpu_subclass);
+
+	/*
+	 * For off-CPU samples the original sample->ip points inside perf's
+	 * own task_clock_plus_event_inject() frame.  Once trimming has put
+	 * the user-meaningful blocking site at the head of the cursor,
+	 * promote that frame's IP to addr_location so hist entries are keyed
+	 * by the blocking site rather than perf internals.
+	 */
+	if (sample->offcpu_subclass != PERF_RECORD_MISC_OFFCPU_NONE &&
+	    cursor->first) {
+		al->addr = cursor->first->ip;
+		if (cursor->first->ms.sym)
+			al->sym = cursor->first->ms.sym;
+		if (cursor->first->ms.map) {
+			map__put(al->map);
+			al->map = map__get(cursor->first->ms.map);
+		}
 	}
 	return 0;
 }
@@ -1231,6 +1385,12 @@ int fill_callchain_info(struct addr_location *al, struct callchain_cursor_node *
 			al->cpumode = PERF_RECORD_MISC_HYPERVISOR;
 			al->level = 'H';
 		}
+	}
+	if (al->offcpu_subclass) {
+		char olevel = perf_offcpu_subclass__level(al->offcpu_subclass);
+
+		if (olevel)
+			al->level = olevel;
 	}
 
 out:

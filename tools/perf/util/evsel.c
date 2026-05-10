@@ -757,6 +757,7 @@ const char *const evsel__sw_names[PERF_COUNT_SW_MAX] = {
 	"alignment-faults",
 	"emulation-faults",
 	"dummy",
+	[PERF_COUNT_SW_TASK_CLOCK_PLUS] = "task-clock-plus",
 };
 
 static const char *__evsel__sw_name(u64 config)
@@ -3231,7 +3232,8 @@ int evsel__parse_sample(struct evsel *evsel, union perf_event *event,
 	data->stream_id = data->id = data->time = -1ULL;
 	data->period = evsel->core.attr.sample_period;
 	data->cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
-	data->misc    = event->header.misc;
+	data->offcpu_subclass = event->header.misc & PERF_RECORD_MISC_OFFCPU_MASK;
+	data->misc    = event->header.misc & ~PERF_RECORD_MISC_OFFCPU_MASK;
 	data->data_src = PERF_MEM_DATA_SRC_NONE;
 	data->vcpu = -1;
 

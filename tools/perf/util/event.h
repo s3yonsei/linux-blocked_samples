@@ -434,4 +434,24 @@ static inline bool perf_event__is_guest(const union perf_event *event)
 	return perf_event_header__is_guest(&event->header);
 }
 
+/*
+ * Map a PERF_RECORD_MISC_OFFCPU_* subclass to a one-character level
+ * label for symbol/callchain display.  Mirrors ps(1) state characters
+ * for runnable/sleeping/uninterruptible tasks; 'I' is used for IOWAIT
+ * since the kernel does not have a dedicated process-state code for it.
+ *
+ * Returns 0 (NUL) for NONE / unknown so callers can fall back to the
+ * regular cpumode-based level.
+ */
+static inline char perf_offcpu_subclass__level(u8 subclass)
+{
+	switch (subclass) {
+	case PERF_RECORD_MISC_OFFCPU_PREEMPT:		return 'R';
+	case PERF_RECORD_MISC_OFFCPU_IOWAIT:		return 'I';
+	case PERF_RECORD_MISC_OFFCPU_INTERRUPTIBLE:	return 'S';
+	case PERF_RECORD_MISC_OFFCPU_UNINTERRUPTIBLE:	return 'D';
+	default:					return 0;
+	}
+}
+
 #endif /* __PERF_RECORD_H */
