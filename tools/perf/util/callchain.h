@@ -211,11 +211,13 @@ int callchain_cursor_append(struct callchain_cursor *cursor, u64 ip,
 
 /*
  * Strip leading perf/scheduler frames from an off-CPU sample's callchain
- * so the new leaf is the user-meaningful blocking site.  See definition
- * for trim policy and IP adjustment rules.
+ * so the new leaf is the user-meaningful blocking site. Returns the
+ * promoted new-leaf node when trimming happened, NULL otherwise. See
+ * the definition for trim policy and IP adjustment rules.
  */
-void callchain_cursor__trim_offcpu_prefix(struct callchain_cursor *cursor,
-					  u8 offcpu_subclass);
+struct callchain_cursor_node *
+callchain_cursor__trim_offcpu_prefix(struct callchain_cursor *cursor,
+				     u8 offcpu_subclass);
 
 /* Close a cursor writing session. Initialize for the reader */
 static inline void callchain_cursor_commit(struct callchain_cursor *cursor)

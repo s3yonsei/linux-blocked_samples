@@ -12679,6 +12679,26 @@ static s64 task_clock_plus_inject_samples(struct perf_event *event,
 	if (WARN_ON_ONCE(iteration <= 0))
 		return 0;
 
+	/*
+	 * Mirror the exclude_* policy applied by task_clock's hrtimer
+	 * overflow (see perf_swevent_hrtimer): drop the batch when the regs
+	 * mode is excluded, or when the current task is idle and exclude_idle
+	 * is set. period_left was already advanced above, mirroring the
+	 * hrtimer model where the timer keeps ticking and only the overflow
+	 * record is suppressed.
+	 *
+	 * The PERF_HES_STOPPED arm of perf_exclude_event() is intentionally
+	 * skipped: at our inject points (sched_task / pmu->add) the bit is
+	 * still set (pmu->start() runs after pmu->add()), unlike the
+	 * hrtimer path where pmu->start() always precedes the overflow.
+	 */
+	if (event->attr.exclude_user && user_mode(regs))
+		return iteration;
+	if (event->attr.exclude_kernel && !user_mode(regs))
+		return iteration;
+	if (event->attr.exclude_idle && is_idle_task(current))
+		return iteration;
+
 	perf_sample_data_init(&data, 0, period);
 
 	/* All N samples carry identical payload; coalescing is a TODO. */
@@ -12844,15 +12864,18 @@ static int task_clock_plus_event_init(struct perf_event *event)
 		return -EINVAL;
 
 	/*
-	 * exclude_* are honored by the generic sampling path:
+	 * exclude_* are honored on the inject path, mirroring task_clock:
 	 *
-	 *   - exclude_user / exclude_kernel are evaluated against the
-	 *     synthesized pt_regs in perf_exclude_event(), so an off-CPU
-	 *     sample (always kernel-mode regs) is dropped under
-	 *     exclude_kernel and kept under exclude_user.
+	 *   - exclude_user / exclude_kernel / exclude_idle are evaluated in
+	 *     task_clock_plus_inject_samples() with the same policy as
+	 *     perf_swevent_hrtimer() (the task_clock overflow handler).
+	 *     Off-CPU regs are always kernel-mode, so exclude_kernel drops
+	 *     the batch and exclude_user keeps it.
 	 *
 	 *   - exclude_callchain_kernel / exclude_callchain_user trim the
-	 *     respective half of the callchain in get_perf_callchain().
+	 *     respective half of the callchain in get_perf_callchain(),
+	 *     unchanged by us. The perf tool then trims any leftover common
+	 *     scheduler frames at report time.
 	 *
 	 * No combination needs to be rejected here.
 	 */
