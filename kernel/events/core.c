@@ -12638,6 +12638,9 @@ static void task_clock_plus_event_stop(struct perf_event *event, int flags)
  * After the last sample there is still new_period_left until @to: that
  * remainder rolls over to the next segment (or to the next sched-out cycle
  * if this is the final segment).
+ *
+ * TODO: split at wakeup so the runqueue-wait tail is tagged PREEMPT
+ * (needs a wakeup-time perf hook in the scheduler).
  */
 static s64 task_clock_plus_inject_samples(struct perf_event *event,
 					  struct pt_regs *regs,
@@ -12678,14 +12681,9 @@ static s64 task_clock_plus_inject_samples(struct perf_event *event,
 
 	perf_sample_data_init(&data, 0, period);
 
-	if (event->attr.sample_type & PERF_SAMPLE_WEIGHT_TYPE) {
-		/* Coalesce identical repeats via weight. */
-		data.weight.full = iteration - 1;
+	/* All N samples carry identical payload; coalescing is a TODO. */
+	for (s64 i = 0; i < iteration; i++)
 		perf_event_overflow(event, &data, regs);
-	} else {
-		for (s64 i = 0; i < iteration; i++)
-			perf_event_overflow(event, &data, regs);
-	}
 
 	return iteration;
 }
@@ -12696,8 +12694,8 @@ static s64 task_clock_plus_inject_samples(struct perf_event *event,
  * them with @subclass.
  *
  *   sched_out_ts                                          T_in (sched-in)
- *        |                       @subclass                             |
- *        v                                                             v
+ *        |                       @subclass                              |
+ *        v                                                              v
  *        |==================== off-CPU window ==========================|
  *        <-------------------- delta_total ---------------------------->
  *
