@@ -286,7 +286,6 @@ static int process_sample_event(const struct perf_tool *tool,
 		return 0;
 
 	addr_location__init(&al);
-	al.offcpu_subclass = sample->offcpu_subclass;
 	if (machine__resolve(machine, &al, sample) < 0) {
 		pr_debug("problem processing %d event, skipping it.\n",
 			 event->header.type);

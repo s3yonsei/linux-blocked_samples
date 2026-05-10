@@ -734,12 +734,6 @@ struct map *thread__find_map(struct thread *thread, u8 cpumode, u64 addr,
 
 		return NULL;
 	}
-	if (al->offcpu_subclass) {
-		char olevel = perf_offcpu_subclass__level(al->offcpu_subclass);
-
-		if (olevel)
-			al->level = olevel;
-	}
 	al->map = maps__find(maps, al->addr);
 	if (al->map != NULL) {
 		/*

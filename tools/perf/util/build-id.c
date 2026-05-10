@@ -69,7 +69,6 @@ int build_id__mark_dso_hit(const struct perf_tool *tool __maybe_unused,
 	}
 
 	addr_location__init(&al);
-	al.offcpu_subclass = sample->offcpu_subclass;
 	if (thread__find_map(thread, sample->cpumode, sample->ip, &al))
 		dso__set_hit(map__dso(al.map));
 

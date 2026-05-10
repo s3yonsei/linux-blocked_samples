@@ -849,7 +849,6 @@ __hists__add_entry(struct hists *hists,
 		.ins_lat = sample->ins_lat,
 		.weight3 = sample->weight3,
 		.simd_flags = sample->simd_flags,
-		.offcpu_subclass = al->offcpu_subclass,
 	}, *he = hists__findnew_entry(hists, &entry, al, sample_self);
 
 	if (!hists->has_callchains && he && he->callchain_size != 0)
@@ -1417,14 +1416,6 @@ hist_entry__cmp_impl(struct perf_hpp_list *hpp_list, struct hist_entry *left,
 		if (cmp)
 			break;
 	}
-
-	/*
-	 * Off-CPU subclass acts as an implicit hist key: keep task-clock-plus
-	 * samples that share the same comm/dso/symbol but blocked for different
-	 * reasons in separate rows.
-	 */
-	if (!cmp)
-		cmp = (int64_t)left->offcpu_subclass - (int64_t)right->offcpu_subclass;
 
 	return cmp;
 }

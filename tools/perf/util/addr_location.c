@@ -14,7 +14,6 @@ void addr_location__init(struct addr_location *al)
 	al->level = 0;
 	al->filtered = 0;
 	al->cpumode = 0;
-	al->offcpu_subclass = 0;
 	al->cpu = 0;
 	al->socket = 0;
 	al->parallelism = 1;
