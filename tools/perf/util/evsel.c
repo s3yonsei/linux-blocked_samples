@@ -747,16 +747,17 @@ static int evsel__hw_name(struct evsel *evsel, char *bf, size_t size)
 }
 
 const char *const evsel__sw_names[PERF_COUNT_SW_MAX] = {
-	"cpu-clock",
-	"task-clock",
-	"page-faults",
-	"context-switches",
-	"cpu-migrations",
-	"minor-faults",
-	"major-faults",
-	"alignment-faults",
-	"emulation-faults",
-	"dummy",
+	[PERF_COUNT_SW_CPU_CLOCK]	= "cpu-clock",
+	[PERF_COUNT_SW_TASK_CLOCK]	= "task-clock",
+	[PERF_COUNT_SW_PAGE_FAULTS]	= "page-faults",
+	[PERF_COUNT_SW_CONTEXT_SWITCHES]= "context-switches",
+	[PERF_COUNT_SW_CPU_MIGRATIONS]	= "cpu-migrations",
+	[PERF_COUNT_SW_PAGE_FAULTS_MIN]	= "minor-faults",
+	[PERF_COUNT_SW_PAGE_FAULTS_MAJ]	= "major-faults",
+	[PERF_COUNT_SW_ALIGNMENT_FAULTS]= "alignment-faults",
+	[PERF_COUNT_SW_EMULATION_FAULTS]= "emulation-faults",
+	[PERF_COUNT_SW_DUMMY]		= "dummy",
+	[PERF_COUNT_SW_TASK_CLOCK_PLUS]	= "task-clock-plus",
 };
 
 static const char *__evsel__sw_name(u64 config)
@@ -1733,6 +1734,23 @@ void evsel__config(struct evsel *evsel, const struct record_opts *opts,
 		else
 			evsel__reset_sample_bit(evsel, PERIOD);
 	}
+
+	/*
+	 * task-clock-plus emits one PERF_RECORD_SAMPLE per off-CPU window
+	 * and stuffs the per-window period (= "how many sample periods this
+	 * window represents") into the record's PERF_SAMPLE_PERIOD field.
+	 * The kernel side refuses fixed-period openers without the bit, so
+	 * default it on here. We honor an explicit --no-period choice
+	 * (opts->period_set && !opts->period above) by leaving the bit
+	 * cleared and letting the kernel return -EINVAL, which makes the
+	 * conflict observable to the user instead of silently overridden.
+	 *
+	 * Frequency mode forces PERF_SAMPLE_PERIOD on a few lines above
+	 * (see "if (attr->freq)") so no extra handling is needed here.
+	 */
+	if (evsel__match(evsel, SOFTWARE, SW_TASK_CLOCK_PLUS) &&
+	    !attr->freq && !opts->period_set)
+		evsel__set_sample_bit(evsel, PERIOD);
 
 	/*
 	 * A dummy event never triggers any actual counter and therefore
@@ -3231,7 +3249,14 @@ int evsel__parse_sample(struct evsel *evsel, union perf_event *event,
 	data->stream_id = data->id = data->time = -1ULL;
 	data->period = evsel->core.attr.sample_period;
 	data->cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
-	data->misc    = event->header.misc;
+	/*
+	 * The kernel encodes the off-CPU subclass for task-clock-plus samples
+	 * in the otherwise unused high bits of perf_event_header::misc. Split
+	 * those out so callers can read the subclass directly and so that the
+	 * generic ::misc field stays free of task-clock-plus specifics.
+	 */
+	data->offcpu_subclass = event->header.misc & PERF_RECORD_MISC_OFFCPU_MASK;
+	data->misc    = event->header.misc & ~PERF_RECORD_MISC_OFFCPU_MASK;
 	data->data_src = PERF_MEM_DATA_SRC_NONE;
 	data->vcpu = -1;
 
@@ -4112,6 +4137,21 @@ int evsel__open_strerror(struct evsel *evsel, struct target *target,
 		return printed + dump_perf_event_processes(msg + printed, size - printed);
 		break;
 	case EINVAL:
+		/*
+		 * task-clock-plus rejects fixed-period openers that lack
+		 * PERF_SAMPLE_PERIOD because each PERF_RECORD_SAMPLE encodes
+		 * a per-window period that the consumer must read from the
+		 * record payload. Surface the requirement explicitly so the
+		 * user is not left guessing why a previously valid command
+		 * line (e.g. "perf record --no-period -e task-clock-plus")
+		 * now fails.
+		 */
+		if (evsel__match(evsel, SOFTWARE, SW_TASK_CLOCK_PLUS) &&
+		    !evsel->core.attr.freq &&
+		    !(evsel->core.attr.sample_type & PERF_SAMPLE_PERIOD))
+			return scnprintf(msg, size,
+		"task-clock-plus requires PERF_SAMPLE_PERIOD in fixed-period mode.\n"
+		"Drop --no-period or pass -P to record the per-sample period.");
 		if (evsel->core.attr.sample_type & PERF_SAMPLE_CODE_PAGE_SIZE && perf_missing_features.code_page_size)
 			return scnprintf(msg, size, "Asking for the code page size isn't supported by this kernel.");
 		if (evsel->core.attr.sample_type & PERF_SAMPLE_DATA_PAGE_SIZE && perf_missing_features.data_page_size)

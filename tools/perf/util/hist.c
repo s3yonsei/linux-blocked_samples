@@ -849,6 +849,7 @@ __hists__add_entry(struct hists *hists,
 		.ins_lat = sample->ins_lat,
 		.weight3 = sample->weight3,
 		.simd_flags = sample->simd_flags,
+		.offcpu_subclass = al->offcpu_subclass,
 	}, *he = hists__findnew_entry(hists, &entry, al, sample_self);
 
 	if (!hists->has_callchains && he && he->callchain_size != 0)
@@ -1198,12 +1199,36 @@ iter_next_cumulative_entry(struct hist_entry_iter *iter,
 			   struct addr_location *al)
 {
 	struct callchain_cursor_node *node;
+	int ret;
+	char off;
 
 	node = callchain_cursor_current(get_tls_callchain_cursor());
 	if (node == NULL)
 		return 0;
 
-	return fill_callchain_info(al, node, iter->hide_unresolved);
+	ret = fill_callchain_info(al, node, iter->hide_unresolved);
+	/*
+	 * fill_callchain_info() returns 1 to mean "advance to this entry" and
+	 * 0 to mean "skip" (unresolved sym + hide_unresolved). Only post-
+	 * process the addr_location when the entry is being kept; otherwise
+	 * leave both the level and the offcpu_subclass alone.
+	 */
+	if (ret) {
+		/*
+		 * fill_callchain_info() resets level/cpumode from the cursor
+		 * node so the off-CPU letter set on the leaf addr_location is
+		 * lost on parent frames. Re-apply it here so that every
+		 * cumulative entry belonging to the same task-clock-plus
+		 * off-CPU sample carries the same letter (R/I/S/D) instead
+		 * of decaying back to '.'/'k'.
+		 */
+		al->offcpu_subclass = iter->sample->offcpu_subclass;
+		off = addr_location__offcpu_level(al->offcpu_subclass);
+		if (off)
+			al->level = off;
+	}
+
+	return ret;
 }
 
 static bool
@@ -1243,6 +1268,13 @@ iter_add_next_cumulative_entry(struct hist_entry_iter *iter,
 		.parent = iter->parent,
 		.raw_data = sample->raw_data,
 		.raw_size = sample->raw_size,
+		/*
+		 * Mirror the implicit hist key set in __hists__add_entry() so
+		 * dup-detection here doesn't compare a zero subclass against
+		 * a real one (which would otherwise hide a duplicate when the
+		 * tie-breaker in hist_entry__cmp_impl() flips the result).
+		 */
+		.offcpu_subclass = al->offcpu_subclass,
 	};
 	int i;
 	struct callchain_cursor cursor, *tls_cursor = get_tls_callchain_cursor();
@@ -1416,6 +1448,19 @@ hist_entry__cmp_impl(struct perf_hpp_list *hpp_list, struct hist_entry *left,
 		if (cmp)
 			break;
 	}
+
+	/*
+	 * Off-CPU subclass acts as an implicit hist key for task-clock-plus.
+	 * Treating it as a final tie-breaker keeps samples that share every
+	 * other key but blocked for different reasons (PREEMPT vs IOWAIT vs
+	 * INTERRUPTIBLE vs UNINTERRUPTIBLE) in separate hist entries instead
+	 * of being collapsed together. On-CPU samples always have
+	 * offcpu_subclass == 0, so this is a no-op for non-task-clock-plus
+	 * events.
+	 */
+	if (!cmp)
+		cmp = (int64_t)left->offcpu_subclass -
+		      (int64_t)right->offcpu_subclass;
 
 	return cmp;
 }

@@ -263,6 +263,13 @@ struct hist_entry {
 	int			parallelism;
 	int			mem_type_off;
 	u8			cpumode;
+	/*
+	 * Off-CPU subclass acts as an implicit hist key for task-clock-plus:
+	 * samples blocked for different reasons stay in separate hist entries
+	 * even when they share comm/dso/symbol/callchain. Zero on entries
+	 * built from samples that have no off-CPU information.
+	 */
+	u8			offcpu_subclass;
 	u8			depth;
 	struct simd_flags	simd_flags;
 

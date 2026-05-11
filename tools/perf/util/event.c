@@ -734,6 +734,20 @@ struct map *thread__find_map(struct thread *thread, u8 cpumode, u64 addr,
 
 		return NULL;
 	}
+	/*
+	 * For task-clock-plus off-CPU samples, surface the blocking reason
+	 * as the level character (overriding the cpumode-derived 'k'/'.').
+	 * This applies to the leaf entry whose addr_location we built from
+	 * the sample. Cumulative parent entries built from the callchain
+	 * cursor are decorated separately in iter_next_cumulative_entry()
+	 * so that every frame in the same off-CPU sample shares the letter.
+	 */
+	{
+		char off = addr_location__offcpu_level(al->offcpu_subclass);
+
+		if (off)
+			al->level = off;
+	}
 	al->map = maps__find(maps, al->addr);
 	if (al->map != NULL) {
 		/*

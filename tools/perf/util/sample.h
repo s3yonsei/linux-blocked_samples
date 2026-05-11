@@ -189,6 +189,14 @@ struct perf_sample {
 	 */
 	u8  cpumode;
 	/**
+	 * @offcpu_subclass: For task-clock-plus samples, the off-CPU subclass
+	 *                   bits decoded from struct perf_event_header::misc
+	 *                   (PERF_RECORD_MISC_OFFCPU_*). Zero on regular
+	 *                   on-CPU samples and on events that do not encode
+	 *                   off-CPU information.
+	 */
+	u8  offcpu_subclass;
+	/**
 	 * @no_hw_idx: For PERF_SAMPLE_BRANCH_STACK, true when
 	 *             PERF_SAMPLE_BRANCH_HW_INDEX isn't set.
 	 */
