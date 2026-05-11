@@ -12699,11 +12699,43 @@ static s64 task_clock_plus_inject_samples(struct perf_event *event,
 	if (event->attr.exclude_idle && is_idle_task(current))
 		return iteration;
 
-	perf_sample_data_init(&data, 0, period);
-
-	/* All N samples carry identical payload; coalescing is a TODO. */
-	for (s64 i = 0; i < iteration; i++)
+	/*
+	 * Coalesce the whole batch into a single overflow record.
+	 *
+	 * All @iteration samples that would otherwise be emitted for this
+	 * off-CPU window share identical payload (same regs, same callchain,
+	 * same timestamp), so emitting them as N copies only inflates ring
+	 * buffer pressure (one PERF_RECORD_SAMPLE + one callchain capture
+	 * per copy) and is the dominant source of "lost samples" warnings on
+	 * workloads with frequent block/wake (fsync, futex, ...).
+	 *
+	 * Instead emit one record whose period is the full window size
+	 * (period * iteration). perf's hist accounting attributes
+	 * sample->period per record, so "Event count (approx.)" and per-
+	 * symbol percentages are bit-identical to the per-iteration loop.
+	 * Only the literal "Samples:" count changes meaning - it now reports
+	 * the number of off-CPU windows rather than the number of period
+	 * units, which matches the actual ring buffer pressure we impose.
+	 *
+	 * task_clock_plus_event_init() refuses fixed-period openers that
+	 * lack PERF_SAMPLE_PERIOD, so the scaled period is guaranteed to
+	 * reach userspace verbatim. Frequency mode is excluded here because
+	 * perf_adjust_period() owns hwc->sample_period in that mode and a
+	 * scaled-period write would fight its low-pass filter; fall back to
+	 * the per-iteration loop so freq feedback stays correct.
+	 *
+	 * Multiplication uses u64 to avoid overflow at realistic scales
+	 * (period ~ 1e6 ns, iteration up to seconds worth of windows).
+	 */
+	if (event->attr.freq) {
+		perf_sample_data_init(&data, 0, period);
+		for (s64 i = 0; i < iteration; i++)
+			perf_event_overflow(event, &data, regs);
+	} else {
+		perf_sample_data_init(&data, 0,
+				      (u64)period * (u64)iteration);
 		perf_event_overflow(event, &data, regs);
+	}
 
 	return iteration;
 }
@@ -12879,6 +12911,29 @@ static int task_clock_plus_event_init(struct perf_event *event)
 	 *
 	 * No combination needs to be rejected here.
 	 */
+
+	/*
+	 * task-clock-plus injects one overflow record per off-CPU window and
+	 * encodes "how many sample periods this window represents" in the
+	 * record's PERF_SAMPLE_PERIOD field. Without that bit the consumer
+	 * would fall back to attr.sample_period for every record and
+	 * undercount long off-CPU windows by a factor of N.
+	 *
+	 * In freq mode the kernel adjusts hwc->sample_period dynamically
+	 * and PERF_SAMPLE_PERIOD is implicit (forced on by perf core for
+	 * the hrtimer-based fallback path), so we only enforce the bit
+	 * for fixed-period mode here. Returning -EINVAL rather than
+	 * silently flipping the bit keeps the perf_event_attr ABI honest:
+	 * non-perf openers (libpfm, raw perf_event_open(), bpf programs)
+	 * see a clear failure instead of a silently miscounting event.
+	 *
+	 * The perf(1) tool sets PERF_SAMPLE_PERIOD automatically for
+	 * task-clock-plus events in evsel__config(), so the user sees no
+	 * change unless they explicitly opted out via --no-period.
+	 */
+	if (!event->attr.freq &&
+	    !(event->attr.sample_type & PERF_SAMPLE_PERIOD))
+		return -EINVAL;
 
 	event->attach_state |= PERF_ATTACH_TASK_DATA;
 
