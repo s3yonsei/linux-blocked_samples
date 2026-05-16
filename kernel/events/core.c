@@ -12583,13 +12583,7 @@ static struct pmu perf_task_clock = {
 };
 
 /*
- * Software event: task time clock that also samples off-CPU periods
- * (sched-out -> sched-in) of the target task.
- *
- * The off-CPU state is captured by the PMU's sched_task() callback at
- * sched-out and cleared at sched-in. The pmu->add() callback drains any
- * pending off-CPU window into the per-event hrtimer cadence, attributing
- * the whole window to the @subclass captured at sched-out.
+ * Software event: task time clock includes off-CPU periods.
  */
 
 static void task_clock_plus_event_update(struct perf_event *event, u64 now)

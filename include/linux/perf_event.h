@@ -1085,16 +1085,21 @@ struct perf_event_context {
  * @sched_out_timestamp: Off-CPU sched-out timestamp (task-clock-plus,
  *                       local_clock() at sched-out).
  * @offcpu_subclass:     Off-CPU subclass captured at sched-out
- *                       (PERF_EVENT_OFFCPU_*); 0 means no pending sample.
+ *                       (PERF_EVENT_OFFCPU_*).
  *
- * Shared per-task storage: Intel LBR call stack mode uses @ctx_cache and
- * @data; task-clock-plus uses @sched_out_timestamp and @offcpu_subclass.
+ * Currently, the struct is used in Intel LBR call stack mode to
+ * save/restore the call stack of a task on context switches, and in
+ * task-clock-plus to record an off-CPU sched-out timestamp and the
+ * task's blocking subclass for off-CPU sample injection on the next
+ * sched-in.
  *
  * The rcu_head is used to prevent the race on free the data.
- * The data only be allocated when Intel LBR call stack mode is enabled.
- * The data will be freed when the mode is disabled.
- * The content of the data will only be accessed in context switch, which
- * should be protected by rcu_read_lock().
+ * The @data slab only be allocated when Intel LBR call stack mode is
+ * enabled. The slab will be freed when the mode is disabled.
+ * The content of the struct is accessed under rcu_read_lock(), typically
+ * from context switch (LBR save/restore, task-clock-plus sched-out
+ * capture and sched-in clear) and additionally from the task-clock-plus
+ * pmu->add() and sample-output paths.
  *
  * Because of the alignment requirement of Intel Arch LBR, the Kmem cache
  * is used to allocate the PMU specific data. The ctx_cache is to track
