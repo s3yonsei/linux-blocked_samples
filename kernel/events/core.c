@@ -12583,7 +12583,7 @@ static struct pmu perf_task_clock = {
 };
 
 /*
- * Software event: task time clock includes off-CPU periods.
+ * Software event: task time clock plus off-CPU periods.
  */
 
 static void task_clock_plus_event_update(struct perf_event *event, u64 now)
